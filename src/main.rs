@@ -29,7 +29,7 @@ struct Cli {
         value_terminator = ";",
         value_name = "COMMAND"
     )]
-    // TODO: how to get clap to take this as a <COMMAND> [ARGS]...??
+    // todo: how to get clap to take this as a <COMMAND> [ARGS]...??
     websocket: Option<Vec<String>>,
 
     #[clap(value_parser)]
@@ -86,7 +86,7 @@ async fn serve(command: String, args: Vec<String>, websocket: Option<Vec<String>
             .and(with_args(args))
             .and(warp::ws())
             .and_then(handle_ws);
-        // TODO: I can't get rust to allow assigning this to a variable and then making a single
+        // todo: I can't get rust to allow assigning this to a variable and then making a single
         // call to warp::serve
         warp::serve(route_ws.or(route_http))
             .run(([127, 0, 0, 1], port))
