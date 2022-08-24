@@ -4,7 +4,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use clap::{Args, Parser};
-use serde::{Deserialize, Serialize};
 
 use warp::Filter;
 
@@ -74,6 +73,8 @@ async fn serve(command: String, args: Vec<String>, websocket: Option<Vec<String>
         .clone()
         .and(with_command(command))
         .and(with_args(args))
+        // todo: I can't work out how to use body::stream. kinda wish warp just gave you a
+        // hyper::body::Body
         .and(warp::body::bytes())
         .and_then(handle_http);
 
@@ -97,9 +98,9 @@ async fn serve(command: String, args: Vec<String>, websocket: Option<Vec<String>
 }
 
 pub async fn handle_ws(
-    method: http::method::Method,
-    path: warp::filters::path::FullPath,
-    headers: http::header::HeaderMap,
+    _method: http::method::Method,
+    _path: warp::filters::path::FullPath,
+    _headers: http::header::HeaderMap,
     command: String,
     args: Vec<String>,
     ws: warp::ws::Ws,
@@ -150,59 +151,13 @@ pub async fn handle_ws(
 }
 
 pub async fn handle_http(
-    method: http::method::Method,
-    path: warp::filters::path::FullPath,
-    headers: http::header::HeaderMap,
+    _method: http::method::Method,
+    _path: warp::filters::path::FullPath,
+    _headers: http::header::HeaderMap,
     command: String,
     args: Vec<String>,
     body: warp::hyper::body::Bytes,
 ) -> Result<impl warp::Reply, std::convert::Infallible> {
-    #[derive(Serialize, Deserialize)]
-    struct Request {
-        #[serde(with = "http_serde::method")]
-        method: http::method::Method,
-        #[serde(with = "http_serde::header_map")]
-        headers: http::header::HeaderMap,
-        #[serde(with = "http_serde::uri")]
-        path: http::Uri,
-        body: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct Response {
-        status: Option<u16>,
-        headers: Option<std::collections::HashMap<String, String>>,
-        body: String,
-    }
-
-    let request = serde_json::json!(Request {
-        method: method,
-        path: path.as_str().parse().unwrap(),
-        headers: headers,
-        body: String::from_utf8(body.to_vec()).unwrap(),
-    });
-
-    let res = process(command, args, request.to_string().as_bytes()).await;
-    let res: Response = serde_json::from_slice(&res.stdout).unwrap();
-
-    let mut builder = http::Response::builder()
-        .status(res.status.unwrap_or(200))
-        .header("Content-Type", "text/html; charset=utf8");
-
-    if let Some(src_headers) = res.headers {
-        let headers = builder.headers_mut().unwrap();
-        for (key, value) in src_headers.iter() {
-            headers.insert(
-                http::header::HeaderName::try_from(key.clone()).unwrap(),
-                http::header::HeaderValue::try_from(value.clone()).unwrap(),
-            );
-        }
-    }
-
-    Ok(builder.body(res.body).unwrap())
-}
-
-async fn process(command: String, args: Vec<String>, i: &[u8]) -> std::process::Output {
     let mut p = tokio::process::Command::new(command)
         .args(args)
         .stdin(std::process::Stdio::piped())
@@ -212,43 +167,41 @@ async fn process(command: String, args: Vec<String>, i: &[u8]) -> std::process::
 
     {
         let mut stdin = p.stdin.take().unwrap();
-        stdin.write_all(i).await.unwrap();
+        stdin.write_all(&body).await.unwrap();
     }
 
     let res = p.wait_with_output().await.expect("todo");
     assert_eq!(res.status.code().unwrap(), 0);
-    res
-}
-
-#[tokio::test]
-async fn test_process() {
-    assert_eq!(
-        process("cat".to_string(), vec![], b"foo").await.stdout,
-        b"foo"
-    );
+    // todo: stream child stdout to http response body
+    let builder = http::Response::builder()
+        .status(200)
+        .header("Content-Type", "text/html; charset=utf8");
+    Ok(builder.body(res.stdout))
 }
 
 #[tokio::test]
 async fn test_serve_defaults() {
-    tokio::spawn(serve(
-        "echo".to_string(),
-        vec![r#"{"body": "hai"}"#.to_string()],
-        None,
-        3030,
-    ));
+    tokio::spawn(serve("cat".to_string(), vec![], None, 3030));
     // give the server a chance to start
     tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
-    let resp = reqwest::get("http://127.0.0.1:3030/").await.unwrap();
+    let resp = reqwest::Client::new()
+        .post("http://127.0.0.1:3030/")
+        .body("oh hai")
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), 200);
     assert_eq!(
         resp.headers().get("content-type").unwrap(),
         "text/html; charset=utf8",
     );
-    assert_eq!(resp.text().await.unwrap(), "hai");
+    assert_eq!(resp.text().await.unwrap(), "oh hai");
 }
 
+/*
+ * todo: bring back the ability to set meta fields in the response
 #[tokio::test]
 async fn test_serve_override() {
     tokio::spawn(serve(
@@ -273,3 +226,4 @@ async fn test_serve_override() {
     assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
     assert_eq!(resp.text().await.unwrap(), "sorry");
 }
+*/
