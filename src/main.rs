@@ -6,15 +6,18 @@ use tokio::signal::unix::{signal, SignalKind};
 
 async fn hello_world(
     req: hyper::Request<hyper::Body>,
-) -> Result<hyper::Response<hyper::Body>, Infallible> {
+) -> Result<hyper::Response<hyper::Body>, hyper::http::Error> {
     let p = tokio::process::Command::new("./run.sh")
         .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("failed to spawn");
 
     let body = hyper::Body::wrap_stream(tokio_util::io::ReaderStream::new(p.stdout.unwrap()));
-    let response = hyper::Response::new(body);
-    Ok(response)
+    let response = hyper::Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Access-Control-Allow-Origin", "http://localhost:8000")
+        .body(body);
+    response
 }
 
 async fn shutdown_signal() {
@@ -28,7 +31,7 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8001));
     let make_svc = make_service_fn(|_conn| async {
         Ok::<_, Infallible>(service_fn(hello_world))
     });
