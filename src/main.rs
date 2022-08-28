@@ -1,14 +1,13 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 
-use futures::TryStreamExt;
 use hyper::service::{make_service_fn, service_fn};
 use tokio::signal::unix::{signal, SignalKind};
 
 async fn hello_world(
     req: hyper::Request<hyper::Body>,
 ) -> Result<hyper::Response<hyper::Body>, Infallible> {
-    let mut p = tokio::process::Command::new("./run.sh")
+    let p = tokio::process::Command::new("./run.sh")
         .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("failed to spawn");
