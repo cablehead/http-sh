@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use hyper::service::{make_service_fn, service_fn};
 use tokio::signal::unix::{signal, SignalKind};
 
-async fn hello_world(
+async fn handler(
     req: hyper::Request<hyper::Body>,
 ) -> Result<hyper::Response<hyper::Body>, hyper::http::Error> {
     let p = tokio::process::Command::new("./run.sh")
@@ -32,12 +32,22 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() {
     let addr = SocketAddr::from(([127, 0, 0, 1], 8001));
-    let make_svc = make_service_fn(|_conn| async {
-        Ok::<_, Infallible>(service_fn(hello_world))
-    });
+    let make_svc = make_service_fn(|_conn| async { Ok::<_, Infallible>(service_fn(handler)) });
     let server = hyper::Server::bind(&addr).serve(make_svc);
     let graceful = server.with_graceful_shutdown(shutdown_signal());
     if let Err(e) = graceful.await {
         eprintln!("server error: {}", e);
     }
+}
+
+#[tokio::test]
+async fn test_handler() {
+    let req = hyper::Request::get("https://www.rust-lang.org/")
+        .body(hyper::Body::empty())
+        .unwrap();
+    let resp = handler(req).await.unwrap();
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/event-stream",
+    );
 }
