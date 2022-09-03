@@ -11,7 +11,14 @@ use hyper::{Body, Request, Response, StatusCode};
 async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Error> {
     match req.method() {
         &hyper::Method::GET => {
-            let p = tokio::process::Command::new("./run.sh")
+            let mut args = vec!["./stream", "cat", "--sse"];
+            if let Some(last_id) = req.headers().get("Last-Event-ID") {
+                args.push("--last-id");
+                args.push(last_id.to_str().unwrap());
+            }
+
+            let p = tokio::process::Command::new("xs-2")
+                .args(args)
                 .stdout(std::process::Stdio::piped())
                 .spawn()
                 .expect("failed to spawn");
@@ -68,6 +75,7 @@ async fn main() {
 #[tokio::test]
 async fn test_handler_get() {
     let req = Request::get("https://www.rust-lang.org/")
+        .header("Last-Event-ID", 5)
         .body(Body::empty())
         .unwrap();
     let resp = handler(req).await.unwrap();
