@@ -17,6 +17,8 @@ async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Erro
                 args.push(last_id.to_str().unwrap());
             }
 
+            println!("{:?}", args);
+
             let p = tokio::process::Command::new("xs-2")
                 .args(args)
                 .stdout(std::process::Stdio::piped())
