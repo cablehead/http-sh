@@ -11,7 +11,7 @@ use hyper::{Body, Request, Response, StatusCode};
 async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Error> {
     match req.method() {
         &hyper::Method::GET => {
-            let mut args = vec!["./stream", "cat", "--sse"];
+            let mut args = vec!["./stream", "cat", "--follow", "--sse"];
             if let Some(last_id) = req.headers().get("Last-Event-ID") {
                 args.push("--last-id");
                 args.push(last_id.to_str().unwrap());
