@@ -1,8 +1,6 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 
-use futures::TryStreamExt as _;
-
 use tokio::signal::unix::{signal, SignalKind};
 
 use hyper::service::{make_service_fn, service_fn};
@@ -21,6 +19,7 @@ async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Erro
 
             let p = tokio::process::Command::new("xs-2")
                 .args(args)
+                .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .spawn()
                 .expect("failed to spawn");
@@ -34,16 +33,32 @@ async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Erro
         }
 
         &hyper::Method::POST => {
-            let mut p = tokio::process::Command::new("./post.sh")
-                .stdin(std::process::Stdio::piped())
+            let (parts, body) = req.into_parts();
+
+            let re = regex::Regex::new(r"^/pipe/(?P<id>\d+)$").unwrap();
+            let id = re
+                .captures(parts.uri.path())
+                .unwrap()
+                .name("id")
+                .unwrap()
+                .as_str();
+
+            let body = hyper::body::to_bytes(body).await.unwrap().to_vec();
+            let body = std::str::from_utf8(&body).unwrap();
+
+            let p = tokio::process::Command::new("xs-2")
+                .args(vec!["./stream", "pipe", id, "--", "bash", "-c", body])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
                 .spawn()
                 .expect("failed to spawn");
 
-            let body = req.into_body().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
-            let mut body = tokio_util::io::StreamReader::new(body);
-            let mut stdin = p.stdin.take().expect("failed to open stdin");
-            tokio::io::copy(&mut body, &mut stdin).await.expect("pipe failed");
-            return Response::builder().body("ok".into());
+            let body = Body::wrap_stream(tokio_util::io::ReaderStream::new(p.stdout.unwrap()));
+            let resp = Response::builder()
+                .header("Content-Type", "text/plain")
+                .header("Access-Control-Allow-Origin", "http://localhost:8000")
+                .body(body);
+            return resp;
         }
 
         _ => {
@@ -65,7 +80,7 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8001));
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8002));
     let make_svc = make_service_fn(|_conn| async { Ok::<_, Infallible>(service_fn(handler)) });
     let server = hyper::Server::bind(&addr).serve(make_svc);
     let graceful = server.with_graceful_shutdown(shutdown_signal());
@@ -89,10 +104,11 @@ async fn test_handler_get() {
 
 #[tokio::test]
 async fn test_handler_post() {
-    let req = Request::post("https://www.rust-lang.org/")
-        .body("payload".into())
+    let req = Request::post("https://www.rust-lang.org/pipe/2")
+        .body("cat".into())
         .unwrap();
     let resp = handler(req).await.unwrap();
+    println!("{:?}", resp);
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
