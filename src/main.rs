@@ -1,10 +1,22 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 
+use futures::TryStreamExt as _;
+
 use tokio::signal::unix::{signal, SignalKind};
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, StatusCode};
+
+use clap::{AppSettings, Parser};
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+#[clap(global_setting(AppSettings::DisableHelpSubcommand))]
+struct Args {
+    #[clap(short, long, value_parser)]
+    port: u16,
+}
 
 async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Error> {
     match req.method() {
@@ -61,6 +73,20 @@ async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Erro
             return resp;
         }
 
+        &hyper::Method::PUT => {
+            let mut p = tokio::process::Command::new("xs-2")
+                .args(vec!["./stream", "put"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .expect("failed to spawn");
+
+            let body = req.into_body().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+            let mut body = tokio_util::io::StreamReader::new(body);
+            let mut stdin = p.stdin.take().expect("failed to open stdin");
+            tokio::io::copy(&mut body, &mut stdin).await.expect("pipe failed");
+            return Response::builder().body("ok".into());
+        }
+
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -80,7 +106,8 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8002));
+    let args = Args::parse();
+    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
     let make_svc = make_service_fn(|_conn| async { Ok::<_, Infallible>(service_fn(handler)) });
     let server = hyper::Server::bind(&addr).serve(make_svc);
     let graceful = server.with_graceful_shutdown(shutdown_signal());
