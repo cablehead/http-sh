@@ -19,6 +19,7 @@ struct Args {
 }
 
 async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Error> {
+    println!("{:?}", req);
     match req.method() {
         &hyper::Method::GET => {
             let mut args = vec!["./stream", "cat", "--follow", "--sse"];
@@ -73,6 +74,14 @@ async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Erro
             return resp;
         }
 
+        &hyper::Method::OPTIONS => {
+            return Response::builder()
+                .header("Access-Control-Allow-Origin", "http://localhost:8000")
+                .header("Access-Control-Allow-Methods", "*")
+                .status(StatusCode::NO_CONTENT)
+                .body(Body::empty());
+        }
+
         &hyper::Method::PUT => {
             let mut p = tokio::process::Command::new("xs-2")
                 .args(vec!["./stream", "put"])
@@ -84,7 +93,10 @@ async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Erro
             let mut body = tokio_util::io::StreamReader::new(body);
             let mut stdin = p.stdin.take().expect("failed to open stdin");
             tokio::io::copy(&mut body, &mut stdin).await.expect("pipe failed");
-            return Response::builder().body("ok".into());
+            return Response::builder()
+                .header("Content-Type", "text/plain")
+                .header("Access-Control-Allow-Origin", "http://localhost:8000")
+                .body("ok".into());
         }
 
         _ => {
