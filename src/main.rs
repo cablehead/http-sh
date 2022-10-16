@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 
@@ -83,16 +84,34 @@ async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Erro
         }
 
         &hyper::Method::PUT => {
-            let mut p = tokio::process::Command::new("xs-2")
-                .args(vec!["./stream", "put"])
+            let params: HashMap<String, String> = req
+                .uri()
+                .query()
+                .map(|v| {
+                    url::form_urlencoded::parse(v.as_bytes())
+                        .into_owned()
+                        .collect()
+                })
+                .unwrap_or_else(HashMap::new);
+
+            let mut cmd = tokio::process::Command::new("xs-2");
+            cmd.args(vec!["./stream", "put"]);
+            params.get("source_id").map(|x| cmd.args(vec!["--source-id", x]));
+            params.get("topic").map(|x| cmd.args(vec!["--topic", x]));
+            params.get("attribute").map(|x| cmd.args(vec!["--attribute", x]));
+            let mut p = cmd
                 .stdin(std::process::Stdio::piped())
                 .spawn()
                 .expect("failed to spawn");
 
-            let body = req.into_body().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+            let body = req
+                .into_body()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
             let mut body = tokio_util::io::StreamReader::new(body);
             let mut stdin = p.stdin.take().expect("failed to open stdin");
-            tokio::io::copy(&mut body, &mut stdin).await.expect("pipe failed");
+            tokio::io::copy(&mut body, &mut stdin)
+                .await
+                .expect("pipe failed");
             return Response::builder()
                 .header("Content-Type", "text/plain")
                 .header("Access-Control-Allow-Origin", "http://localhost:8000")
