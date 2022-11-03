@@ -11,16 +11,24 @@ use hyper::{Body, Request, Response, StatusCode};
 
 use clap::{AppSettings, Parser};
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 #[clap(global_setting(AppSettings::DisableHelpSubcommand))]
 struct Args {
     #[clap(short, long, value_parser)]
     port: u16,
+    #[clap(value_parser)]
+    command: String,
+    #[clap(value_parser)]
+    args: Vec<String>,
 }
 
-async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Error> {
-    println!("{:?}", req);
+async fn handler(
+    command: &String,
+    args: &Vec<String>,
+    req: Request<Body>,
+) -> Result<Response<Body>, hyper::http::Error> {
+    println!("{:?} {} {:?}", req, command, args);
     match req.method() {
         &hyper::Method::GET => {
             let mut args = vec!["./stream", "cat", "--follow", "--sse"];
@@ -96,9 +104,13 @@ async fn handler(req: Request<Body>) -> Result<Response<Body>, hyper::http::Erro
 
             let mut cmd = tokio::process::Command::new("xs-2");
             cmd.args(vec!["./stream", "put"]);
-            params.get("source_id").map(|x| cmd.args(vec!["--source-id", x]));
+            params
+                .get("source_id")
+                .map(|x| cmd.args(vec!["--source-id", x]));
             params.get("topic").map(|x| cmd.args(vec!["--topic", x]));
-            params.get("attribute").map(|x| cmd.args(vec!["--attribute", x]));
+            params
+                .get("attribute")
+                .map(|x| cmd.args(vec!["--attribute", x]));
             let mut p = cmd
                 .stdin(std::process::Stdio::piped())
                 .spawn()
@@ -138,9 +150,20 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+
     let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
-    let make_svc = make_service_fn(|_conn| async { Ok::<_, Infallible>(service_fn(handler)) });
+
+    let make_svc = make_service_fn(|_conn| {
+        let args = args.clone();
+        let svc_fn = service_fn(move |req| {
+            let args = args.clone();
+            async move { handler(&args.command, &args.args, req).await }
+        });
+        async move { Ok::<_, Infallible>(svc_fn) }
+    });
+
     let server = hyper::Server::bind(&addr).serve(make_svc);
+
     let graceful = server.with_graceful_shutdown(shutdown_signal());
     if let Err(e) = graceful.await {
         eprintln!("server error: {}", e);
