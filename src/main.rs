@@ -23,10 +23,33 @@ struct Args {
     args: Vec<String>,
 }
 
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
+
+    let make_svc = make_service_fn(|_conn| {
+        let args = args.clone();
+        let svc_fn = service_fn(move |req| {
+            let args = args.clone();
+            async move { handler(req, &args.command, &args.args).await }
+        });
+        async move { Ok::<_, Infallible>(svc_fn) }
+    });
+
+    let server = hyper::Server::bind(&addr).serve(make_svc);
+
+    let graceful = server.with_graceful_shutdown(shutdown_signal());
+    if let Err(e) = graceful.await {
+        eprintln!("server error: {}", e);
+    }
+}
+
 async fn handler(
+    req: Request<Body>,
     command: &String,
     args: &Vec<String>,
-    req: Request<Body>,
 ) -> Result<Response<Body>, hyper::http::Error> {
     println!("{:?} {} {:?}", req, command, args);
     match req.method() {
@@ -144,29 +167,6 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = sigint.recv() => {},
         _ = sigterm.recv() => {},
-    }
-}
-
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
-
-    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
-
-    let make_svc = make_service_fn(|_conn| {
-        let args = args.clone();
-        let svc_fn = service_fn(move |req| {
-            let args = args.clone();
-            async move { handler(&args.command, &args.args, req).await }
-        });
-        async move { Ok::<_, Infallible>(svc_fn) }
-    });
-
-    let server = hyper::Server::bind(&addr).serve(make_svc);
-
-    let graceful = server.with_graceful_shutdown(shutdown_signal());
-    if let Err(e) = graceful.await {
-        eprintln!("server error: {}", e);
     }
 }
 
