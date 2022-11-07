@@ -51,6 +51,7 @@ async fn handler(
     command: &String,
     args: &Vec<String>,
 ) -> Result<Response<Body>, hyper::http::Error> {
+    println!("{:?}", req);
     /*
     let params: HashMap<String, String> = req
         .uri()
@@ -81,26 +82,42 @@ async fn handler(
         .as_str();
     */
 
+    let (parts, body) = req.into_parts();
+
+    fn headers_to_hashmap(headers: &hyper::header::HeaderMap) -> HashMap<String, Vec<String>> {
+        let mut ret = std::collections::HashMap::new();
+        for (k, v) in headers {
+            let k = k.as_str().to_owned();
+            let v = String::from_utf8_lossy(v.as_bytes()).into_owned();
+            ret.entry(k).or_insert_with(Vec::new).push(v)
+        }
+        ret
+    }
+
     let mut p = tokio::process::Command::new(command)
         .args(args)
+        .env("HTTP_SH_URI", parts.uri.to_string())
+        .env(
+            "HTTP_SH_HEADERS",
+            serde_json::to_string(&headers_to_hashmap(&parts.headers)).unwrap(),
+        )
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("failed to spawn");
 
-    let body = req
-        .into_body()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    let body = body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
     let mut body = tokio_util::io::StreamReader::new(body);
     let mut stdin = p.stdin.take().expect("failed to open stdin");
+
+    let res_body = Body::wrap_stream(tokio_util::io::ReaderStream::new(p.stdout.unwrap()));
+    let resp = Response::builder()
+        .header("Content-Type", "text/plain")
+        .body(res_body);
+
     tokio::io::copy(&mut body, &mut stdin)
         .await
         .expect("pipe failed");
-
-    let body = Body::wrap_stream(tokio_util::io::ReaderStream::new(p.stdout.unwrap()));
-    let resp = Response::builder()
-        .header("Content-Type", "text/plain")
-        .body(body);
     return resp;
 }
 
