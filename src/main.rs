@@ -106,16 +106,6 @@ async fn handler(
         headers: Option<std::collections::HashMap<String, String>>,
     }
 
-    fn headers_to_hashmap(headers: &hyper::header::HeaderMap) -> HashMap<String, Vec<String>> {
-        let mut ret = std::collections::HashMap::new();
-        for (k, v) in headers {
-            let k = k.as_str().to_owned();
-            let v = String::from_utf8_lossy(v.as_bytes()).into_owned();
-            ret.entry(k).or_insert_with(Vec::new).push(v)
-        }
-        ret
-    }
-
     let mut p = tokio::process::Command::new(command)
         .args(args)
         /*
