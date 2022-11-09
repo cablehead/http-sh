@@ -182,25 +182,28 @@ async fn shutdown_signal() {
     }
 }
 
-use indoc::indoc;
 #[cfg(test)]
-use pretty_assertions::assert_eq;
+mod tests {
+    use super::*;
+    use indoc::indoc;
+    use pretty_assertions::assert_eq;
 
-#[tokio::test]
-async fn test_handler() {
-    let req = hyper::Request::post("https://www.rust-lang.org/")
-        .header("Last-Event-ID", 5)
-        .body("zebody".into())
-        .unwrap();
-    let resp = handler(req, &"bash".into(), &vec!["-c".into(), "cat".into()]).await;
-    assert_eq!(resp.status(), hyper::StatusCode::OK);
-    assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
-    let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
-    let body = std::str::from_utf8(&body).unwrap();
-    assert_eq!(
-        body,
-        indoc! {r#"
+    #[tokio::test]
+    async fn test_handler() {
+        let req = hyper::Request::post("https://www.rust-lang.org/")
+            .header("Last-Event-ID", 5)
+            .body("zebody".into())
+            .unwrap();
+        let resp = handler(req, &"bash".into(), &vec!["-c".into(), "cat".into()]).await;
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            body,
+            indoc! {r#"
         {"headers":{"last-event-id":"5"},"method":"POST","uri":"https://www.rust-lang.org/"}
         zebody"#}
-    );
+        );
+    }
 }
