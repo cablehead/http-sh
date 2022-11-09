@@ -4,10 +4,12 @@ use std::net::SocketAddr;
 
 use futures::TryStreamExt as _;
 
+use tokio::io::AsyncWriteExt;
 use tokio::signal::unix::{signal, SignalKind};
 
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, StatusCode};
+
+use serde::{Deserialize, Serialize};
 
 use clap::{AppSettings, Parser};
 
@@ -65,7 +67,9 @@ async fn main() {
         let svc_fn = service_fn(move |req| {
             let args = args.clone();
             async move {
-                Ok::<Response<Body>, Infallible>(handler(req, &args.command, &args.args).await)
+                Ok::<hyper::Response<hyper::Body>, Infallible>(
+                    handler(req, &args.command, &args.args).await,
+                )
             }
         });
         async move { Ok::<_, Infallible>(svc_fn) }
@@ -79,8 +83,28 @@ async fn main() {
     }
 }
 
-async fn handler(req: Request<Body>, command: &String, args: &Vec<String>) -> Response<Body> {
+async fn handler(
+    req: hyper::Request<hyper::Body>,
+    command: &String,
+    args: &Vec<String>,
+) -> hyper::Response<hyper::Body> {
     println!("{:?}", req);
+
+    #[derive(Serialize, Deserialize)]
+    struct Request {
+        #[serde(with = "http_serde::method")]
+        method: http::method::Method,
+        #[serde(with = "http_serde::header_map")]
+        headers: http::header::HeaderMap,
+        #[serde(with = "http_serde::uri")]
+        uri: http::Uri,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Response {
+        status: Option<u16>,
+        headers: Option<std::collections::HashMap<String, String>>,
+    }
 
     fn headers_to_hashmap(headers: &hyper::header::HeaderMap) -> HashMap<String, Vec<String>> {
         let mut ret = std::collections::HashMap::new();
@@ -94,33 +118,47 @@ async fn handler(req: Request<Body>, command: &String, args: &Vec<String>) -> Re
 
     let mut p = tokio::process::Command::new(command)
         .args(args)
+        /*
+         * todo: as a cli option?
         .env("HTTP_SH_METHOD", req.method().as_str().to_ascii_uppercase())
         .env("HTTP_SH_URI", req.uri().to_string())
         .env(
             "HTTP_SH_HEADERS",
             serde_json::to_string(&headers_to_hashmap(&req.headers())).unwrap(),
         )
+        */
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("failed to spawn");
 
-    let req_body = req
-        .into_body()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    let (req_parts, req_body) = req.into_parts();
+    let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
     let mut req_body = tokio_util::io::StreamReader::new(req_body);
     let mut stdin = p.stdin.take().expect("failed to take stdin");
+
+    let req_meta = serde_json::json!(Request {
+        method: req_parts.method,
+        uri: req_parts.uri,
+        headers: req_parts.headers,
+    });
+
+    stdin
+        .write_all(format!("{}\n", &req_meta.to_string()).as_bytes())
+        .await
+        .unwrap();
+
     let write_stdin = async {
         tokio::io::copy(&mut req_body, &mut stdin)
             .await
             .expect("streaming request body");
     };
 
-    let mut stdout = p.stdout.take().expect("failed to take stdout");
-    let res_body = Body::wrap_stream(tokio_util::io::ReaderStream::new(stdout));
+    let stdout = p.stdout.take().expect("failed to take stdout");
+    let res_body = hyper::Body::wrap_stream(tokio_util::io::ReaderStream::new(stdout));
     let read_stdout = async {
         // todo: this should not return until the body stream has ended
-        Response::builder()
+        hyper::Response::builder()
             .header("Content-Type", "text/plain")
             .body(res_body)
             .expect("streaming response body")
@@ -144,16 +182,25 @@ async fn shutdown_signal() {
     }
 }
 
+use indoc::indoc;
+#[cfg(test)]
+use pretty_assertions::assert_eq;
+
 #[tokio::test]
 async fn test_handler() {
-    let req = Request::post("https://www.rust-lang.org/")
+    let req = hyper::Request::post("https://www.rust-lang.org/")
         .header("Last-Event-ID", 5)
         .body("zebody".into())
         .unwrap();
     let resp = handler(req, &"bash".into(), &vec!["-c".into(), "cat".into()]).await;
-    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.status(), hyper::StatusCode::OK);
     assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
     let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
     let body = std::str::from_utf8(&body).unwrap();
-    assert_eq!(body, "zebody");
+    assert_eq!(
+        body,
+        indoc! {r#"
+        {"headers":{"last-event-id":"5"},"method":"POST","uri":"https://www.rust-lang.org/"}
+        zebody"#}
+    );
 }
