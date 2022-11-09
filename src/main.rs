@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 
@@ -123,9 +122,6 @@ async fn handler(
         .expect("failed to spawn");
 
     let (req_parts, req_body) = req.into_parts();
-    let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
-    let mut req_body = tokio_util::io::StreamReader::new(req_body);
-    let mut stdin = p.stdin.take().expect("failed to take stdin");
 
     let req_meta = serde_json::json!(Request {
         method: req_parts.method,
@@ -133,6 +129,10 @@ async fn handler(
         headers: req_parts.headers,
     });
 
+    let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    let mut req_body = tokio_util::io::StreamReader::new(req_body);
+
+    let mut stdin = p.stdin.take().expect("failed to take stdin");
     stdin
         .write_all(format!("{}\n", &req_meta.to_string()).as_bytes())
         .await
@@ -145,12 +145,15 @@ async fn handler(
     };
 
     let stdout = p.stdout.take().expect("failed to take stdout");
-    let res_body = hyper::Body::wrap_stream(tokio_util::io::ReaderStream::new(stdout));
+    let stdout = tokio::io::BufReader::new(stdout);
+
     let read_stdout = async {
         // todo: this should not return until the body stream has ended
+        let stdout = tokio_util::io::ReaderStream::new(stdout);
+        let stdout = hyper::Body::wrap_stream(stdout);
         hyper::Response::builder()
             .header("Content-Type", "text/plain")
-            .body(res_body)
+            .body(stdout)
             .expect("streaming response body")
     };
 
@@ -184,7 +187,12 @@ mod tests {
             .header("Last-Event-ID", 5)
             .body("zebody".into())
             .unwrap();
-        let resp = handler(req, &"bash".into(), &vec!["-c".into(), "cat".into()]).await;
+        let resp = handler(
+            req,
+            &"bash".into(),
+            &vec!["-c".into(), r#"echo '{}'; cat"#.into()],
+        )
+        .await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
         assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
