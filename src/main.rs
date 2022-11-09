@@ -94,6 +94,7 @@ async fn handler(req: Request<Body>, command: &String, args: &Vec<String>) -> Re
 
     let mut p = tokio::process::Command::new(command)
         .args(args)
+        .env("HTTP_SH_METHOD", req.method().as_str().to_ascii_uppercase())
         .env("HTTP_SH_URI", req.uri().to_string())
         .env(
             "HTTP_SH_HEADERS",
