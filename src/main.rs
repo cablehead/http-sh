@@ -118,6 +118,7 @@ async fn handler(req: Request<Body>, command: &String, args: &Vec<String>) -> Re
     let mut stdout = p.stdout.take().expect("failed to take stdout");
     let res_body = Body::wrap_stream(tokio_util::io::ReaderStream::new(stdout));
     let read_stdout = async {
+        // todo: this should not return until the body stream has ended
         Response::builder()
             .header("Content-Type", "text/plain")
             .body(res_body)
