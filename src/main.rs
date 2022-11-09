@@ -202,8 +202,8 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-        {"headers":{"last-event-id":"5"},"method":"POST","uri":"https://www.rust-lang.org/"}
-        zebody"#}
+            {"headers":{"last-event-id":"5"},"method":"POST","uri":"https://www.rust-lang.org/"}
+            zebody"#}
         );
     }
 }
