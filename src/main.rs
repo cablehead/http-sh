@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 
 use futures::TryStreamExt as _;
 
+use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::signal::unix::{signal, SignalKind};
 
@@ -145,13 +146,19 @@ async fn handler(
     };
 
     let stdout = p.stdout.take().expect("failed to take stdout");
-    let stdout = tokio::io::BufReader::new(stdout);
+    let mut stdout = tokio::io::BufReader::new(stdout);
+
+    let mut line = String::new();
+    stdout.read_line(&mut line).await.unwrap();
+
+    let res: Response = serde_json::from_str(&line).unwrap();
 
     let read_stdout = async {
         // todo: this should not return until the body stream has ended
         let stdout = tokio_util::io::ReaderStream::new(stdout);
         let stdout = hyper::Body::wrap_stream(stdout);
         hyper::Response::builder()
+            .status(res.status.unwrap_or(200))
             .header("Content-Type", "text/plain")
             .body(stdout)
             .expect("streaming response body")
