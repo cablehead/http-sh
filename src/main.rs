@@ -189,8 +189,8 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[tokio::test]
-    async fn test_handler() {
-        let req = hyper::Request::post("https://www.rust-lang.org/")
+    async fn handler_basics() {
+        let req = hyper::Request::post("https://api.cross.stream/")
             .header("Last-Event-ID", 5)
             .body("zebody".into())
             .unwrap();
@@ -207,7 +207,37 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-            {"headers":{"last-event-id":"5"},"method":"POST","uri":"https://www.rust-lang.org/"}
+            {"headers":{"last-event-id":"5"},"method":"POST","uri":"https://api.cross.stream/"}
+            zebody"#}
+        );
+    }
+
+    #[tokio::test]
+    async fn handler_response_meta() {
+        let req = hyper::Request::post("https://api.cross.stream/")
+            .body("zebody".into())
+            .unwrap();
+        let resp = handler(
+            req,
+            &"bash".into(),
+            &vec![
+                "-c".into(),
+                r#"
+                echo '{"status":404,"headers":{"content-type":"text/markdown"}}'
+                cat
+                "#
+                .into(),
+            ],
+        )
+        .await;
+        assert_eq!(resp.status(), hyper::StatusCode::NOT_FOUND);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            body,
+            indoc! {r#"
+            {"headers":{},"method":"POST","uri":"https://api.cross.stream/"}
             zebody"#}
         );
     }
