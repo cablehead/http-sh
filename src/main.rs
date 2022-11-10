@@ -150,18 +150,30 @@ async fn handler(
 
     let mut line = String::new();
     stdout.read_line(&mut line).await.unwrap();
-
-    let res: Response = serde_json::from_str(&line).unwrap();
+    let res_meta: Response = serde_json::from_str(&line).unwrap();
 
     let read_stdout = async {
+        let mut res = hyper::Response::builder().status(res_meta.status.unwrap_or(200));
+        {
+            let res_headers = res.headers_mut().unwrap();
+            if let Some(headers) = res_meta.headers {
+                for (key, value) in headers {
+                    res_headers.insert(
+                        http::header::HeaderName::from_bytes(key.as_bytes()).unwrap(),
+                        http::header::HeaderValue::from_bytes(value.as_bytes()).unwrap(),
+                    );
+                }
+            }
+
+            if !res_headers.contains_key("content-type") {
+                res_headers.insert("content-type", "text/plain".parse().unwrap());
+            }
+        }
+
         // todo: this should not return until the body stream has ended
         let stdout = tokio_util::io::ReaderStream::new(stdout);
         let stdout = hyper::Body::wrap_stream(stdout);
-        hyper::Response::builder()
-            .status(res.status.unwrap_or(200))
-            .header("Content-Type", "text/plain")
-            .body(stdout)
-            .expect("streaming response body")
+        res.body(stdout).expect("streaming response body")
     };
 
     let (_, response) = tokio::join!(write_stdin, read_stdout);
@@ -231,7 +243,7 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), hyper::StatusCode::NOT_FOUND);
-        assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
+        assert_eq!(resp.headers().get("content-type").unwrap(), "text/markdown");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let body = std::str::from_utf8(&body).unwrap();
         assert_eq!(
