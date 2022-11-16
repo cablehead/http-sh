@@ -100,7 +100,7 @@ async fn handler(
         uri: http::Uri,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Default, Debug, Serialize, Deserialize)]
     struct Response {
         status: Option<u16>,
         headers: Option<std::collections::HashMap<String, String>>,
@@ -130,29 +130,31 @@ async fn handler(
         headers: req_parts.headers,
     });
 
-    let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
-    let mut req_body = tokio_util::io::StreamReader::new(req_body);
-
-    let mut stdin = p.stdin.take().expect("failed to take stdin");
-    stdin
-        .write_all(format!("{}\n", &req_meta.to_string()).as_bytes())
-        .await
-        .unwrap();
-
     let write_stdin = async {
+        let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+        let mut req_body = tokio_util::io::StreamReader::new(req_body);
+
+        let mut stdin = p.stdin.take().expect("failed to take stdin");
+        stdin
+            .write_all(format!("{}\n", &req_meta.to_string()).as_bytes())
+            .await
+            .unwrap();
         tokio::io::copy(&mut req_body, &mut stdin)
             .await
             .expect("streaming request body");
     };
 
-    let stdout = p.stdout.take().expect("failed to take stdout");
-    let mut stdout = tokio::io::BufReader::new(stdout);
-
-    let mut line = String::new();
-    stdout.read_line(&mut line).await.unwrap();
-    let res_meta: Response = serde_json::from_str(&line).unwrap();
-
     let read_stdout = async {
+        let stdout = p.stdout.take().expect("failed to take stdout");
+        let mut stdout = tokio::io::BufReader::new(stdout);
+        let mut line = String::new();
+
+        let res_meta: Response = match stdout.read_line(&mut line).await {
+            Ok(0) => Response::default(),
+            Ok(_) => serde_json::from_str(&line).unwrap(),
+            Err(e) => panic!("{:?}", e),
+        };
+
         let mut res = hyper::Response::builder().status(res_meta.status.unwrap_or(200));
         {
             let res_headers = res.headers_mut().unwrap();
@@ -201,7 +203,30 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[tokio::test]
-    async fn handler_basics() {
+    async fn handler_get() {
+        let req = hyper::Request::get("https://api.cross.stream/")
+            .body(hyper::Body::empty())
+            .unwrap();
+        let resp = handler(
+            req,
+            &"bash".into(),
+            &vec!["-c".into(), r#"echo '{}'; cat"#.into()],
+        )
+        .await;
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            body,
+            indoc! {r#"
+            {"headers":{},"method":"GET","uri":"https://api.cross.stream/"}
+            "#}
+        );
+    }
+
+    #[tokio::test]
+    async fn handler_post() {
         let req = hyper::Request::post("https://api.cross.stream/")
             .header("Last-Event-ID", 5)
             .body("zebody".into())
@@ -222,6 +247,30 @@ mod tests {
             {"headers":{"last-event-id":"5"},"method":"POST","uri":"https://api.cross.stream/"}
             zebody"#}
         );
+    }
+
+    #[tokio::test]
+    async fn handler_response_empty() {
+        let req = hyper::Request::get("https://api.cross.stream/")
+            .body(hyper::Body::empty())
+            .unwrap();
+        let resp = handler(
+            req,
+            &"bash".into(),
+            &vec![
+                "-c".into(),
+                r#"
+                cat > /dev/null
+                "#
+                .into(),
+            ],
+        )
+        .await;
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert_eq!(body, "");
     }
 
     #[tokio::test]
