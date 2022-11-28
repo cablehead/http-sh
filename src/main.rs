@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 
@@ -15,15 +16,6 @@ use clap::{AppSettings, Parser};
 
 /*
  * todo:
-let params: HashMap<String, String> = req
-    .uri()
-    .query()
-    .map(|v| {
-        url::form_urlencoded::parse(v.as_bytes())
-            .into_owned()
-            .collect()
-    })
-    .unwrap_or_else(HashMap::new);
 */
 
 /*
@@ -98,6 +90,8 @@ async fn handler(
         headers: http::header::HeaderMap,
         #[serde(with = "http_serde::uri")]
         uri: http::Uri,
+        path: String,
+        query: HashMap<String, String>,
     }
 
     #[derive(Default, Debug, Serialize, Deserialize)]
@@ -124,10 +118,24 @@ async fn handler(
 
     let (req_parts, req_body) = req.into_parts();
 
+    let path = req_parts.uri.path().to_string();
+
+    let query: HashMap<String, String> = req_parts
+        .uri
+        .query()
+        .map(|v| {
+            url::form_urlencoded::parse(v.as_bytes())
+                .into_owned()
+                .collect()
+        })
+        .unwrap_or_else(HashMap::new);
+
     let req_meta = serde_json::json!(Request {
         method: req_parts.method,
-        uri: req_parts.uri,
         headers: req_parts.headers,
+        uri: req_parts.uri,
+        path: path,
+        query: query,
     });
 
     let write_stdin = async {
@@ -220,7 +228,7 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-            {"headers":{},"method":"GET","uri":"https://api.cross.stream/"}
+            {"headers":{},"method":"GET","path":"/","query":{},"uri":"https://api.cross.stream/"}
             "#}
         );
     }
@@ -244,7 +252,7 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-            {"headers":{"last-event-id":"5"},"method":"POST","uri":"https://api.cross.stream/"}
+            {"headers":{"last-event-id":"5"},"method":"POST","path":"/","query":{},"uri":"https://api.cross.stream/"}
             zebody"#}
         );
     }
@@ -298,7 +306,7 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-            {"headers":{},"method":"POST","uri":"https://api.cross.stream/"}
+            {"headers":{},"method":"POST","path":"/","query":{},"uri":"https://api.cross.stream/"}
             zebody"#}
         );
     }
