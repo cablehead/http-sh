@@ -95,8 +95,20 @@ async fn handler(
 
     #[derive(Default, Debug, Serialize, Deserialize)]
     struct Response {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<scru128::Scru128Id>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         status: Option<u16>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         headers: Option<std::collections::HashMap<String, String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        next: Option<NextCommand>,
+    }
+
+    #[derive(Default, Debug, Serialize, Deserialize)]
+    struct NextCommand {
+        command: String,
+        args: Vec<String>,
     }
 
     let mut p = tokio::process::Command::new(command)
@@ -129,8 +141,10 @@ async fn handler(
         })
         .unwrap_or_else(HashMap::new);
 
+    let request_id = scru128::new();
+
     let req_meta = serde_json::json!(Request {
-        request_id: scru128::new(),
+        request_id: request_id,
         method: req_parts.method,
         headers: req_parts.headers,
         uri: req_parts.uri,
@@ -159,11 +173,26 @@ async fn handler(
         let mut stdout = tokio::io::BufReader::new(stdout);
         let mut line = String::new();
 
-        let res_meta: Response = match stdout.read_line(&mut line).await {
+        let mut res_meta: Response = match stdout.read_line(&mut line).await {
             Ok(0) => Response::default(),
             Ok(_) => serde_json::from_str(&line).unwrap(),
             Err(e) => panic!("{:?}", e),
         };
+
+        res_meta.request_id = Some(request_id);
+        println!("{}", serde_json::json!(res_meta));
+
+        if let Some(next) = res_meta.next {
+            let mut next_p = tokio::process::Command::new(next.command)
+                .args(next.args)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .expect("failed to spawn");
+
+            tokio::io::copy(&mut stdout, &mut next_p.stdin.take().expect("failed to take stdin")).await.unwrap();
+            stdout = tokio::io::BufReader::new(next_p.stdout.take().expect("failed to take stdout"));
+        }
 
         let mut res = hyper::Response::builder().status(res_meta.status.unwrap_or(200));
         {
@@ -308,6 +337,36 @@ mod tests {
             body,
             indoc! {r#"
             # Header
+            "#}
+        );
+    }
+
+    #[tokio::test]
+    async fn handler_response_next() {
+        let req = hyper::Request::get("https://api.cross.stream/")
+            .body(hyper::Body::empty())
+            .unwrap();
+        let resp = handler(
+            req,
+            &"bash".into(),
+            &vec![
+                "-c".into(),
+                r#"
+                echo '{"next":{"command": "bash", "args": ["-c", "echo from next; cat"]}}'
+                echo 'from first'
+                "#
+                .into(),
+            ],
+        )
+        .await;
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            body,
+            indoc! {r#"
+            from next
+            from first
             "#}
         );
     }
