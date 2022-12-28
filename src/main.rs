@@ -80,10 +80,9 @@ async fn handler(
     command: &String,
     args: &Vec<String>,
 ) -> hyper::Response<hyper::Body> {
-    println!("{:?}", req);
-
     #[derive(Serialize, Deserialize)]
     struct Request {
+        request_id: scru128::Scru128Id,
         #[serde(with = "http_serde::method")]
         method: http::method::Method,
         #[serde(with = "http_serde::header_map")]
@@ -131,12 +130,15 @@ async fn handler(
         .unwrap_or_else(HashMap::new);
 
     let req_meta = serde_json::json!(Request {
+        request_id: scru128::new(),
         method: req_parts.method,
         headers: req_parts.headers,
         uri: req_parts.uri,
         path: path,
         query: query,
     });
+
+    println!("{}", req_meta);
 
     let write_stdin = async {
         let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
@@ -218,7 +220,7 @@ mod tests {
         let resp = handler(
             req,
             &"bash".into(),
-            &vec!["-c".into(), r#"echo '{}'; cat"#.into()],
+            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
         )
         .await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
@@ -228,7 +230,7 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-            {"headers":{},"method":"GET","path":"/","query":{},"uri":"https://api.cross.stream/"}
+            "GET"
             "#}
         );
     }
@@ -242,7 +244,7 @@ mod tests {
         let resp = handler(
             req,
             &"bash".into(),
-            &vec!["-c".into(), r#"echo '{}'; cat"#.into()],
+            &vec!["-c".into(), r#"echo '{}'; tail -n1"#.into()],
         )
         .await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
@@ -252,7 +254,6 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-            {"headers":{"last-event-id":"5"},"method":"POST","path":"/","query":{},"uri":"https://api.cross.stream/"}
             zebody"#}
         );
     }
@@ -283,8 +284,8 @@ mod tests {
 
     #[tokio::test]
     async fn handler_response_meta() {
-        let req = hyper::Request::post("https://api.cross.stream/")
-            .body("zebody".into())
+        let req = hyper::Request::get("https://api.cross.stream/")
+            .body(hyper::Body::empty())
             .unwrap();
         let resp = handler(
             req,
@@ -293,7 +294,7 @@ mod tests {
                 "-c".into(),
                 r#"
                 echo '{"status":404,"headers":{"content-type":"text/markdown"}}'
-                cat
+                echo '# Header'
                 "#
                 .into(),
             ],
@@ -306,8 +307,8 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-            {"headers":{},"method":"POST","path":"/","query":{},"uri":"https://api.cross.stream/"}
-            zebody"#}
+            # Header
+            "#}
         );
     }
 }
