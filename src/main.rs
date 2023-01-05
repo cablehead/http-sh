@@ -60,7 +60,7 @@ async fn main() {
             let args = args.clone();
             async move {
                 Ok::<hyper::Response<hyper::Body>, Infallible>(
-                    handler(req, &args.command, &args.args).await,
+                    handler(req, &"".into(), &args.command, &args.args).await,
                 )
             }
         });
@@ -77,6 +77,7 @@ async fn main() {
 
 async fn handler(
     req: hyper::Request<hyper::Body>,
+    static_path: &String,
     command: &String,
     args: &Vec<String>,
 ) -> hyper::Response<hyper::Body> {
@@ -111,6 +112,11 @@ async fn handler(
         args: Vec<String>,
     }
 
+    if req.uri().path().starts_with("/static/") {
+        let static_ = hyper_staticfile::Static::new(&static_path);
+        return static_.serve(req).await.unwrap();
+    }
+
     let mut p = tokio::process::Command::new(command)
         .args(args)
         /*
@@ -128,9 +134,7 @@ async fn handler(
         .expect("failed to spawn");
 
     let (req_parts, req_body) = req.into_parts();
-
     let path = req_parts.uri.path().to_string();
-
     let query: HashMap<String, String> = req_parts
         .uri
         .query()
@@ -190,8 +194,14 @@ async fn handler(
                 .spawn()
                 .expect("failed to spawn");
 
-            tokio::io::copy(&mut stdout, &mut next_p.stdin.take().expect("failed to take stdin")).await.unwrap();
-            stdout = tokio::io::BufReader::new(next_p.stdout.take().expect("failed to take stdout"));
+            tokio::io::copy(
+                &mut stdout,
+                &mut next_p.stdin.take().expect("failed to take stdin"),
+            )
+            .await
+            .unwrap();
+            stdout =
+                tokio::io::BufReader::new(next_p.stdout.take().expect("failed to take stdout"));
         }
 
         let mut res = hyper::Response::builder().status(res_meta.status.unwrap_or(200));
@@ -240,6 +250,7 @@ mod tests {
     use super::*;
     use indoc::indoc;
     use pretty_assertions::assert_eq;
+    use temp_dir::TempDir;
 
     #[tokio::test]
     async fn handler_get() {
@@ -248,6 +259,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &"".into(),
             &"bash".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
         )
@@ -272,6 +284,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &"".into(),
             &"bash".into(),
             &vec!["-c".into(), r#"echo '{}'; tail -n1"#.into()],
         )
@@ -294,6 +307,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &"".into(),
             &"bash".into(),
             &vec![
                 "-c".into(),
@@ -318,6 +332,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &"".into(),
             &"bash".into(),
             &vec![
                 "-c".into(),
@@ -348,6 +363,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &"".into(),
             &"bash".into(),
             &vec![
                 "-c".into(),
@@ -368,6 +384,36 @@ mod tests {
             from next
             from first
             "#}
+        );
+    }
+
+    #[tokio::test]
+    async fn handler_static() {
+        let d = TempDir::new().unwrap();
+
+        let static_path = d.path().join("static");
+        std::fs::create_dir(&static_path).unwrap();
+        let filename = static_path.join("index.html");
+        std::fs::write(&filename, "hello world").unwrap();
+
+        let req = hyper::Request::get("https://api.cross.stream/static/")
+            .body(hyper::Body::empty())
+            .unwrap();
+        let resp = handler(
+            req,
+            &d.path().to_str().unwrap().into(),
+            &"bash".into(),
+            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
+        )
+        .await;
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "text/html");
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            body,
+            indoc! {r#"
+            hello world"#}
         );
     }
 }
