@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use futures::TryStreamExt as _;
 
@@ -14,32 +15,13 @@ use serde::{Deserialize, Serialize};
 
 use clap::{AppSettings, Parser};
 
-/*
- * todo:
-*/
-
-/*
-if let Some(last_id) = req.headers().get("Last-Event-ID") {
-    args.push("--last-id");
-    args.push(last_id.to_str().unwrap());
-}
-*/
-
-/*
-let (parts, body) = req.into_parts();
-let re = regex::Regex::new(r"^/pipe/(?P<id>\d+)$").unwrap();
-let id = re
-    .captures(parts.uri.path())
-    .unwrap()
-    .name("id")
-    .unwrap()
-    .as_str();
-*/
-
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 #[clap(global_setting(AppSettings::DisableHelpSubcommand))]
 struct Args {
+    /// Absolute or relative path to files to serve statically
+    #[clap(short, long, value_parser)]
+    static_path: Option<PathBuf>,
     #[clap(short, long, value_parser)]
     port: u16,
     #[clap(value_parser)]
@@ -60,7 +42,7 @@ async fn main() {
             let args = args.clone();
             async move {
                 Ok::<hyper::Response<hyper::Body>, Infallible>(
-                    handler(req, &args.command, &args.args).await,
+                    handler(req, &args.static_path, &args.command, &args.args).await,
                 )
             }
         });
@@ -77,6 +59,7 @@ async fn main() {
 
 async fn handler(
     req: hyper::Request<hyper::Body>,
+    static_path: &Option<PathBuf>,
     command: &String,
     args: &Vec<String>,
 ) -> hyper::Response<hyper::Body> {
@@ -111,6 +94,16 @@ async fn handler(
         args: Vec<String>,
     }
 
+    if let Some(static_path) = static_path {
+        let resolved = hyper_staticfile::resolve(&static_path, &req).await.unwrap();
+        if let hyper_staticfile::ResolveResult::Found(_, _, _) = resolved {
+            return hyper_staticfile::ResponseBuilder::new()
+                .request(&req)
+                .build(resolved)
+                .unwrap();
+        }
+    }
+
     let mut p = tokio::process::Command::new(command)
         .args(args)
         /*
@@ -128,9 +121,7 @@ async fn handler(
         .expect("failed to spawn");
 
     let (req_parts, req_body) = req.into_parts();
-
     let path = req_parts.uri.path().to_string();
-
     let query: HashMap<String, String> = req_parts
         .uri
         .query()
@@ -152,7 +143,10 @@ async fn handler(
         query: query,
     });
 
-    println!("{}", req_meta);
+    println!(
+        "{}",
+        serde_json::json!({"app": "http.response", "detail": req_meta})
+    );
 
     let write_stdin = async {
         let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
@@ -179,8 +173,15 @@ async fn handler(
             Err(e) => panic!("{:?}", e),
         };
 
+        let status = res_meta.status.unwrap_or(200);
+
         res_meta.request_id = Some(request_id);
-        println!("{}", serde_json::json!(res_meta));
+        res_meta.status = Some(status);
+
+        println!(
+            "{}",
+            serde_json::json!({"app": "http.response", "detail": res_meta})
+        );
 
         if let Some(next) = res_meta.next {
             let mut next_p = tokio::process::Command::new(next.command)
@@ -190,11 +191,17 @@ async fn handler(
                 .spawn()
                 .expect("failed to spawn");
 
-            tokio::io::copy(&mut stdout, &mut next_p.stdin.take().expect("failed to take stdin")).await.unwrap();
-            stdout = tokio::io::BufReader::new(next_p.stdout.take().expect("failed to take stdout"));
+            tokio::io::copy(
+                &mut stdout,
+                &mut next_p.stdin.take().expect("failed to take stdin"),
+            )
+            .await
+            .unwrap();
+            stdout =
+                tokio::io::BufReader::new(next_p.stdout.take().expect("failed to take stdout"));
         }
 
-        let mut res = hyper::Response::builder().status(res_meta.status.unwrap_or(200));
+        let mut res = hyper::Response::builder().status(status);
         {
             let res_headers = res.headers_mut().unwrap();
             if let Some(headers) = res_meta.headers {
@@ -248,6 +255,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &None,
             &"bash".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
         )
@@ -272,6 +280,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &None,
             &"bash".into(),
             &vec!["-c".into(), r#"echo '{}'; tail -n1"#.into()],
         )
@@ -294,6 +303,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &None,
             &"bash".into(),
             &vec![
                 "-c".into(),
@@ -318,6 +328,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &None,
             &"bash".into(),
             &vec![
                 "-c".into(),
@@ -348,6 +359,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            &None,
             &"bash".into(),
             &vec![
                 "-c".into(),
@@ -367,6 +379,61 @@ mod tests {
             indoc! {r#"
             from next
             from first
+            "#}
+        );
+    }
+
+    #[tokio::test]
+    async fn handler_static() {
+        let d = tempfile::tempdir().unwrap();
+
+        let subdir = d.path().join("static");
+        std::fs::create_dir(&subdir).unwrap();
+        let filename = subdir.join("index.html");
+        std::fs::write(&filename, "hello world").unwrap();
+
+        let static_path = Some(d.into_path());
+
+        // static file exists
+        let req = hyper::Request::get("https://api.cross.stream/static/")
+            .body(hyper::Body::empty())
+            .unwrap();
+        let resp = handler(
+            req,
+            &static_path,
+            &"bash".into(),
+            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
+        )
+        .await;
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "text/html");
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            body,
+            indoc! {r#"
+            hello world"#}
+        );
+
+        // static file not found, fall back to command + args
+        let req = hyper::Request::get("https://api.cross.stream/")
+            .body(hyper::Body::empty())
+            .unwrap();
+        let resp = handler(
+            req,
+            &static_path,
+            &"bash".into(),
+            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
+        )
+        .await;
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            body,
+            indoc! {r#"
+            "GET"
             "#}
         );
     }
