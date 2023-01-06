@@ -143,7 +143,10 @@ async fn handler(
         query: query,
     });
 
-    println!("{}", req_meta);
+    println!(
+        "{}",
+        serde_json::json!({"app": "http.response", "detail": req_meta})
+    );
 
     let write_stdin = async {
         let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
@@ -170,8 +173,15 @@ async fn handler(
             Err(e) => panic!("{:?}", e),
         };
 
+        let status = res_meta.status.unwrap_or(200);
+
         res_meta.request_id = Some(request_id);
-        println!("{}", serde_json::json!(res_meta));
+        res_meta.status = Some(status);
+
+        println!(
+            "{}",
+            serde_json::json!({"app": "http.response", "detail": res_meta})
+        );
 
         if let Some(next) = res_meta.next {
             let mut next_p = tokio::process::Command::new(next.command)
@@ -191,7 +201,7 @@ async fn handler(
                 tokio::io::BufReader::new(next_p.stdout.take().expect("failed to take stdout"));
         }
 
-        let mut res = hyper::Response::builder().status(res_meta.status.unwrap_or(200));
+        let mut res = hyper::Response::builder().status(status);
         {
             let res_headers = res.headers_mut().unwrap();
             if let Some(headers) = res_meta.headers {
