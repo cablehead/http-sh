@@ -3,7 +3,7 @@
 Run with:
 
 ```bash
-http-sh --static-only ./examples/static --port 3333
+http-sh --static-path ./examples/static --port 3333 -- bash -c "echo {}; jq .path"
 ```
 
 ## sanitize.css.gz
