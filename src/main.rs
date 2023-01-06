@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use futures::TryStreamExt as _;
 
@@ -42,7 +43,7 @@ let id = re
 struct Args {
     /// Absolute or relative path to files to serve statically
     #[clap(short, long, value_parser)]
-    static_path: std::path::PathBuf,
+    static_path: Option<PathBuf>,
     #[clap(short, long, value_parser)]
     port: u16,
     #[clap(value_parser)]
@@ -63,7 +64,7 @@ async fn main() {
             let args = args.clone();
             async move {
                 Ok::<hyper::Response<hyper::Body>, Infallible>(
-                    handler(req, &"".into(), &args.command, &args.args).await,
+                    handler(req, &args.static_path, &args.command, &args.args).await,
                 )
             }
         });
@@ -80,7 +81,7 @@ async fn main() {
 
 async fn handler(
     req: hyper::Request<hyper::Body>,
-    static_path: &String,
+    static_path: &Option<PathBuf>,
     command: &String,
     args: &Vec<String>,
 ) -> hyper::Response<hyper::Body> {
@@ -115,12 +116,14 @@ async fn handler(
         args: Vec<String>,
     }
 
-    let resolved = hyper_staticfile::resolve(&static_path, &req).await.unwrap();
-    if let hyper_staticfile::ResolveResult::Found(_, _, _) = resolved {
-        return hyper_staticfile::ResponseBuilder::new()
-            .request(&req)
-            .build(resolved)
-            .unwrap();
+    if let Some(static_path) = static_path {
+        let resolved = hyper_staticfile::resolve(&static_path, &req).await.unwrap();
+        if let hyper_staticfile::ResolveResult::Found(_, _, _) = resolved {
+            return hyper_staticfile::ResponseBuilder::new()
+                .request(&req)
+                .build(resolved)
+                .unwrap();
+        }
     }
 
     let mut p = tokio::process::Command::new(command)
@@ -256,7 +259,6 @@ mod tests {
     use super::*;
     use indoc::indoc;
     use pretty_assertions::assert_eq;
-    use temp_dir::TempDir;
 
     #[tokio::test]
     async fn handler_get() {
@@ -265,7 +267,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            &"".into(),
+            &None,
             &"bash".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
         )
@@ -290,7 +292,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            &"".into(),
+            &None,
             &"bash".into(),
             &vec!["-c".into(), r#"echo '{}'; tail -n1"#.into()],
         )
@@ -313,7 +315,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            &"".into(),
+            &None,
             &"bash".into(),
             &vec![
                 "-c".into(),
@@ -338,7 +340,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            &"".into(),
+            &None,
             &"bash".into(),
             &vec![
                 "-c".into(),
@@ -369,7 +371,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            &"".into(),
+            &None,
             &"bash".into(),
             &vec![
                 "-c".into(),
@@ -395,12 +397,14 @@ mod tests {
 
     #[tokio::test]
     async fn handler_static() {
-        let d = TempDir::new().unwrap();
+        let d = tempfile::tempdir().unwrap();
 
-        let static_path = d.path().join("static");
-        std::fs::create_dir(&static_path).unwrap();
-        let filename = static_path.join("index.html");
+        let subdir = d.path().join("static");
+        std::fs::create_dir(&subdir).unwrap();
+        let filename = subdir.join("index.html");
         std::fs::write(&filename, "hello world").unwrap();
+
+        let static_path = Some(d.into_path());
 
         // static file exists
         let req = hyper::Request::get("https://api.cross.stream/static/")
@@ -408,7 +412,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            &d.path().to_str().unwrap().into(),
+            &static_path,
             &"bash".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
         )
@@ -429,7 +433,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            &d.path().to_str().unwrap().into(),
+            &static_path,
             &"bash".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
         )
