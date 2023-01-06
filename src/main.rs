@@ -40,6 +40,9 @@ let id = re
 #[clap(author, version, about, long_about = None)]
 #[clap(global_setting(AppSettings::DisableHelpSubcommand))]
 struct Args {
+    /// Absolute or relative path to files to serve statically
+    #[clap(short, long, value_parser)]
+    static_path: std::path::PathBuf,
     #[clap(short, long, value_parser)]
     port: u16,
     #[clap(value_parser)]
@@ -112,9 +115,12 @@ async fn handler(
         args: Vec<String>,
     }
 
-    if req.uri().path().starts_with("/static/") {
-        let static_ = hyper_staticfile::Static::new(&static_path);
-        return static_.serve(req).await.unwrap();
+    let resolved = hyper_staticfile::resolve(&static_path, &req).await.unwrap();
+    if let hyper_staticfile::ResolveResult::Found(_, _, _) = resolved {
+        return hyper_staticfile::ResponseBuilder::new()
+            .request(&req)
+            .build(resolved)
+            .unwrap();
     }
 
     let mut p = tokio::process::Command::new(command)
@@ -396,6 +402,7 @@ mod tests {
         let filename = static_path.join("index.html");
         std::fs::write(&filename, "hello world").unwrap();
 
+        // static file exists
         let req = hyper::Request::get("https://api.cross.stream/static/")
             .body(hyper::Body::empty())
             .unwrap();
@@ -414,6 +421,28 @@ mod tests {
             body,
             indoc! {r#"
             hello world"#}
+        );
+
+        // static file not found, fall back to command + args
+        let req = hyper::Request::get("https://api.cross.stream/")
+            .body(hyper::Body::empty())
+            .unwrap();
+        let resp = handler(
+            req,
+            &d.path().to_str().unwrap().into(),
+            &"bash".into(),
+            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
+        )
+        .await;
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            body,
+            indoc! {r#"
+            "GET"
+            "#}
         );
     }
 }
