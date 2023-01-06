@@ -15,28 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use clap::{AppSettings, Parser};
 
-/*
- * todo:
-*/
-
-/*
-if let Some(last_id) = req.headers().get("Last-Event-ID") {
-    args.push("--last-id");
-    args.push(last_id.to_str().unwrap());
-}
-*/
-
-/*
-let (parts, body) = req.into_parts();
-let re = regex::Regex::new(r"^/pipe/(?P<id>\d+)$").unwrap();
-let id = re
-    .captures(parts.uri.path())
-    .unwrap()
-    .name("id")
-    .unwrap()
-    .as_str();
-*/
-
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 #[clap(global_setting(AppSettings::DisableHelpSubcommand))]
