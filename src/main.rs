@@ -145,7 +145,7 @@ async fn handler(
 
     println!(
         "{}",
-        serde_json::json!({"app": "http.response", "detail": req_meta})
+        serde_json::json!({"app": "http.request", "detail": req_meta})
     );
 
     let write_stdin = async {
