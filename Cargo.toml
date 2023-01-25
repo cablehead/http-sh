@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clap = { version = "3.2.14", features = ["derive"] }
+clap = { version = "4.1.4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "0.14", features = ["full"] }
 hyper-staticfile = "0.9.4"
