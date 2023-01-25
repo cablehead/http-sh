@@ -135,12 +135,12 @@ async fn handler(
     let request_id = scru128::new();
 
     let req_meta = serde_json::json!(Request {
-        request_id: request_id,
+        request_id,
         method: req_parts.method,
         headers: req_parts.headers,
         uri: req_parts.uri,
-        path: path,
-        query: query,
+        path,
+        query,
     });
 
     println!(
