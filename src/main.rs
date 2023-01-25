@@ -13,11 +13,10 @@ use hyper::service::{make_service_fn, service_fn};
 
 use serde::{Deserialize, Serialize};
 
-use clap::{AppSettings, Parser};
+use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
-#[clap(global_setting(AppSettings::DisableHelpSubcommand))]
 struct Args {
     /// Absolute or relative path to files to serve statically
     #[clap(short, long, value_parser)]
