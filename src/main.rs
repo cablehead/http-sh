@@ -52,7 +52,7 @@ async fn main() {
 
     let graceful = server.with_graceful_shutdown(shutdown_signal());
     if let Err(e) = graceful.await {
-        eprintln!("server error: {}", e);
+        eprintln!("server error: {e}");
     }
 }
 
@@ -169,7 +169,7 @@ async fn handler(
         let mut res_meta: Response = match stdout.read_line(&mut line).await {
             Ok(0) => Response::default(),
             Ok(_) => serde_json::from_str(&line).unwrap(),
-            Err(e) => panic!("{:?}", e),
+            Err(e) => panic!("{e:?}"),
         };
 
         let status = res_meta.status.unwrap_or(200);
