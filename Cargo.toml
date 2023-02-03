@@ -19,5 +19,5 @@ scru128 = { version = "2.2.0", features = ["serde"] }
 
 [dev-dependencies]
 pretty_assertions = "1.3.0"
-indoc = "1.0.7"
+indoc = "2.0.0"
 tempfile = "3"
