@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 
 use futures::TryStreamExt as _;
@@ -21,8 +21,11 @@ struct Args {
     /// Absolute or relative path to files to serve statically
     #[clap(short, long, value_parser)]
     static_path: Option<PathBuf>,
-    #[clap(short, long, value_parser)]
-    port: u16,
+
+    /// Address to listen on [HOST]:PORT
+    #[clap(short, long, value_parser, value_name = "ADDR")]
+    listen: String,
+
     #[clap(value_parser)]
     command: String,
     #[clap(value_parser)]
@@ -33,7 +36,7 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
+    let addr = parse_listen(&args.listen);
 
     let make_svc = make_service_fn(|_conn| {
         let args = args.clone();
@@ -241,6 +244,16 @@ async fn shutdown_signal() {
     }
 }
 
+fn parse_listen(addr: &str) -> SocketAddr {
+    // :8080 -> 127.0.0.1:8080
+    let mut addr = addr.to_string();
+    if addr.starts_with(':') {
+        addr = format!("127.0.0.1{}", addr)
+    }
+    let mut addrs_iter = addr.to_socket_addrs().unwrap();
+    addrs_iter.next().unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,6 +447,22 @@ mod tests {
             indoc! {r#"
             "GET"
             "#}
+        );
+    }
+
+    #[test]
+    fn test_parse_listen() {
+        assert_eq!(
+            parse_listen("127.0.0.1:8080"),
+            SocketAddr::from(([127, 0, 0, 1], 8080))
+        );
+        assert_eq!(
+            parse_listen("localhost:8080"),
+            SocketAddr::from((Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 8080))
+        );
+        assert_eq!(
+            parse_listen(":8080"),
+            SocketAddr::from(([127, 0, 0, 1], 8080))
         );
     }
 }
