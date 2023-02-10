@@ -255,7 +255,7 @@ mod tests {
         let resp = handler(
             req,
             &None,
-            &"bash".into(),
+            &"sh".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
         )
         .await;
@@ -280,7 +280,7 @@ mod tests {
         let resp = handler(
             req,
             &None,
-            &"bash".into(),
+            &"sh".into(),
             &vec!["-c".into(), r#"echo '{}'; tail -n1"#.into()],
         )
         .await;
@@ -303,7 +303,7 @@ mod tests {
         let resp = handler(
             req,
             &None,
-            &"bash".into(),
+            &"sh".into(),
             &vec![
                 "-c".into(),
                 r#"
@@ -328,7 +328,7 @@ mod tests {
         let resp = handler(
             req,
             &None,
-            &"bash".into(),
+            &"sh".into(),
             &vec![
                 "-c".into(),
                 r#"
@@ -359,11 +359,11 @@ mod tests {
         let resp = handler(
             req,
             &None,
-            &"bash".into(),
+            &"sh".into(),
             &vec![
                 "-c".into(),
                 r#"
-                echo '{"next":{"command": "bash", "args": ["-c", "echo from next; cat"]}}'
+                echo '{"next":{"command": "sh", "args": ["-c", "echo from next; cat"]}}'
                 echo 'from first'
                 "#
                 .into(),
@@ -400,7 +400,7 @@ mod tests {
         let resp = handler(
             req,
             &static_path,
-            &"bash".into(),
+            &"sh".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
         )
         .await;
@@ -421,7 +421,7 @@ mod tests {
         let resp = handler(
             req,
             &static_path,
-            &"bash".into(),
+            &"sh".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
         )
         .await;
