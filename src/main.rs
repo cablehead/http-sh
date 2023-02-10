@@ -260,6 +260,8 @@ mod tests {
     use indoc::indoc;
     use pretty_assertions::assert_eq;
 
+    use std::net::Ipv6Addr;
+
     #[tokio::test]
     async fn handler_get() {
         let req = hyper::Request::get("https://api.cross.stream/")
