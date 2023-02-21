@@ -36,21 +36,21 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let addr = parse_listen(&args.listen);
-
-    let make_svc = make_service_fn(|_conn| {
+    let make_svc = make_service_fn(|conn: &hyper::server::conn::AddrStream| {
+        let addr = conn.remote_addr();
         let args = args.clone();
         let svc_fn = service_fn(move |req| {
             let args = args.clone();
             async move {
                 Ok::<hyper::Response<hyper::Body>, Infallible>(
-                    handler(req, &args.static_path, &args.command, &args.args).await,
+                    handler(req, addr, &args.static_path, &args.command, &args.args).await,
                 )
             }
         });
         async move { Ok::<_, Infallible>(svc_fn) }
     });
 
+    let addr = parse_listen(&args.listen);
     let server = hyper::Server::bind(&addr).serve(make_svc);
 
     let graceful = server.with_graceful_shutdown(shutdown_signal());
@@ -61,6 +61,7 @@ async fn main() {
 
 async fn handler(
     req: hyper::Request<hyper::Body>,
+    addr: SocketAddr,
     static_path: &Option<PathBuf>,
     command: &String,
     args: &Vec<String>,
@@ -70,6 +71,9 @@ async fn handler(
         request_id: scru128::Scru128Id,
         #[serde(with = "http_serde::method")]
         method: http::method::Method,
+        proto: String,
+        remote_ip: std::net::IpAddr,
+        remote_port: u16,
         #[serde(with = "http_serde::header_map")]
         headers: http::header::HeaderMap,
         #[serde(with = "http_serde::uri")]
@@ -138,6 +142,9 @@ async fn handler(
 
     let req_meta = serde_json::json!(Request {
         request_id,
+        proto: format!("{:?}", req_parts.version),
+        remote_ip: addr.ip(),
+        remote_port: addr.port(),
         method: req_parts.method,
         headers: req_parts.headers,
         uri: req_parts.uri,
@@ -269,6 +276,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            "127.0.0.1:8080".parse().unwrap(),
             &None,
             &"sh".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
@@ -294,6 +302,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            "127.0.0.1:8080".parse().unwrap(),
             &None,
             &"sh".into(),
             &vec!["-c".into(), r#"echo '{}'; tail -n1"#.into()],
@@ -317,6 +326,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            "127.0.0.1:8080".parse().unwrap(),
             &None,
             &"sh".into(),
             &vec![
@@ -342,6 +352,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            "127.0.0.1:8080".parse().unwrap(),
             &None,
             &"sh".into(),
             &vec![
@@ -373,6 +384,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            "127.0.0.1:8080".parse().unwrap(),
             &None,
             &"sh".into(),
             &vec![
@@ -414,6 +426,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            "127.0.0.1:8080".parse().unwrap(),
             &static_path,
             &"sh".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
@@ -435,6 +448,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
+            "127.0.0.1:8080".parse().unwrap(),
             &static_path,
             &"sh".into(),
             &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
