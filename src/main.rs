@@ -180,10 +180,10 @@ async fn handler(
         let mut buf = String::new();
         res_reader.read_to_string(&mut buf).await.unwrap();
 
-        let mut res_meta = if !buf.is_empty() {
-            serde_json::from_str::<Response>(&buf).unwrap()
-        } else {
+        let mut res_meta = if buf.is_empty() {
             Response::default()
+        } else {
+            serde_json::from_str::<Response>(&buf).unwrap()
         };
 
         let status = res_meta.status.unwrap_or(200);
@@ -213,7 +213,6 @@ async fn handler(
             }
         }
 
-        // todo: this should not return until the body stream has ended
         let stdout = p.stdout.take().expect("failed to take stdout");
         let stdout = tokio::io::BufReader::new(stdout);
         let stdout = tokio_util::io::ReaderStream::new(stdout);
