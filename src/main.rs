@@ -106,21 +106,29 @@ async fn handler(
         }
     }
 
-    let (mut reader, writer) = tokio_pipe::pipe().unwrap();
+    let (req_reader, mut req_writer) = tokio_pipe::pipe().unwrap();
+    let (mut res_reader, res_writer) = tokio_pipe::pipe().unwrap();
 
     let mut p = tokio::process::Command::new(command)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .fd_mappings(vec![FdMapping {
-            parent_fd: writer.as_raw_fd(),
-            child_fd: 4,
-        }])
+        .fd_mappings(vec![
+            FdMapping {
+                parent_fd: req_reader.as_raw_fd(),
+                child_fd: 3,
+            },
+            FdMapping {
+                parent_fd: res_writer.as_raw_fd(),
+                child_fd: 4,
+            },
+        ])
         .unwrap()
         .spawn()
         .expect("failed to spawn");
 
-    drop(writer);
+    drop(req_reader);
+    drop(res_writer);
 
     let (req_parts, req_body) = req.into_parts();
     let path = req_parts.uri.path().to_string();
@@ -154,14 +162,15 @@ async fn handler(
     );
 
     let write_stdin = async {
-        let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
-        let mut req_body = tokio_util::io::StreamReader::new(req_body);
-
-        let mut stdin = p.stdin.take().expect("failed to take stdin");
-        stdin
+        req_writer
             .write_all(format!("{}\n", &req_meta.to_string()).as_bytes())
             .await
             .unwrap();
+        drop(req_writer);
+
+        let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+        let mut req_body = tokio_util::io::StreamReader::new(req_body);
+        let mut stdin = p.stdin.take().expect("failed to take stdin");
         tokio::io::copy(&mut req_body, &mut stdin)
             .await
             .expect("streaming request body");
@@ -169,7 +178,7 @@ async fn handler(
 
     let read_stdout = async {
         let mut buf = String::new();
-        reader.read_to_string(&mut buf).await.unwrap();
+        res_reader.read_to_string(&mut buf).await.unwrap();
         println!("buf: {}", buf);
 
         let mut res_meta = if buf.len() > 0 {
@@ -316,7 +325,7 @@ mod tests {
 
     #[tokio::test]
     async fn handler_response_meta() {
-        let req = hyper::Request::get("https://api.cross.stream/")
+        let req = hyper::Request::get("https://api.cross.stream/notfound")
             .body(hyper::Body::empty())
             .unwrap();
         let resp = handler(
@@ -327,8 +336,9 @@ mod tests {
             &vec![
                 "-c".into(),
                 r#"
-                echo '{"status":404,"headers":{"content-type":"text/markdown"}}'
-                echo '# Header'
+                echo '{"status":404,"headers":{"content-type":"text/markdown"}}' >&4
+                echo '# Not Found'
+                jq -r .path <&3
                 "#
                 .into(),
             ],
@@ -341,7 +351,8 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-            # Header
+            # Not Found
+            /notfound
             "#}
         );
     }
@@ -365,8 +376,8 @@ mod tests {
             req,
             "127.0.0.1:8080".parse().unwrap(),
             &static_path,
-            &"sh".into(),
-            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
+            &"echo".into(),
+            &vec!["hello world".into()],
         )
         .await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
@@ -387,20 +398,15 @@ mod tests {
             req,
             "127.0.0.1:8080".parse().unwrap(),
             &static_path,
-            &"sh".into(),
-            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
+            &"echo".into(),
+            &vec!["hello world".into()],
         )
         .await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
         assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let body = std::str::from_utf8(&body).unwrap();
-        assert_eq!(
-            body,
-            indoc! {r#"
-            "GET"
-            "#}
-        );
+        assert_eq!(body, "hello world\n");
     }
 
     #[test]
