@@ -165,7 +165,13 @@ async fn handler(
         req_writer
             .write_all(format!("{}\n", &req_meta.to_string()).as_bytes())
             .await
-            .unwrap();
+            .or_else(|e| match e.kind() {
+                // ignore BrokenPipe errors, as the child process may have exited without
+                // reading the metadata
+                std::io::ErrorKind::BrokenPipe => Ok(()),
+                _ => Err(e),
+            })
+            .expect("failed to write request metadata");
         drop(req_writer);
 
         let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
@@ -179,6 +185,7 @@ async fn handler(
     let read_stdout = async {
         let mut buf = String::new();
         res_reader.read_to_string(&mut buf).await.unwrap();
+        drop(res_reader);
 
         let mut res_meta = if buf.is_empty() {
             Response::default()
