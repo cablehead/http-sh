@@ -83,3 +83,36 @@ Sat Feb 25 00:31:45 EST 2023
 Sat Feb 25 00:31:46 EST 2023
 ...
 ```
+
+### [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events)
+
+Pairs well with [`xcat`](https://github.com/cablehead/xcat)
+
+```bash
+$ http-sh --listen :5000 -- bash -c '
+    jo headers="$(jo "content-type"="text/event-stream")" >&4
+    exec 4>&-
+    tail -F source.json | xcat -- bash -c "sed '\''s/^/data: /g'\''; echo;"
+'
+
+# simulate generating events in a seperate process
+$ while true; do jo date="$(date)" ; sleep 1 ; done >> source.json
+
+$ curl -si localhost:5000/
+HTTP/1.1 200 OK
+content-type: text/event-stream
+transfer-encoding: chunked
+date: Sat, 25 Feb 2023 18:13:37 GMT
+
+data: {"date":"Sat Feb 25 13:13:35 EST 2023"}
+
+data: {"date":"Sat Feb 25 13:13:36 EST 2023"}
+
+data: {"date":"Sat Feb 25 13:13:37 EST 2023"}
+
+data: {"date":"Sat Feb 25 13:13:38 EST 2023"}
+
+data: {"date":"Sat Feb 25 13:13:39 EST 2023"}
+
+...
+```
