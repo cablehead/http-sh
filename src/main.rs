@@ -181,7 +181,7 @@ async fn handler(
         res_reader.read_to_string(&mut buf).await.unwrap();
         println!("buf: {}", buf);
 
-        let mut res_meta = if buf.len() > 0 {
+        let mut res_meta = if !buf.is_empty() {
             serde_json::from_str::<Response>(&buf).unwrap()
         } else {
             Response::default()
