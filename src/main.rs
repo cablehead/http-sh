@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
 use futures::TryStreamExt as _;
 
-use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::signal::unix::{signal, SignalKind};
 
@@ -14,6 +15,9 @@ use hyper::service::{make_service_fn, service_fn};
 use serde::{Deserialize, Serialize};
 
 use clap::Parser;
+
+use command_fds::tokio::CommandFdAsyncExt;
+use command_fds::FdMapping;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -90,14 +94,6 @@ async fn handler(
         status: Option<u16>,
         #[serde(skip_serializing_if = "Option::is_none")]
         headers: Option<std::collections::HashMap<String, String>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        next: Option<NextCommand>,
-    }
-
-    #[derive(Default, Debug, Serialize, Deserialize)]
-    struct NextCommand {
-        command: String,
-        args: Vec<String>,
     }
 
     if let Some(static_path) = static_path {
@@ -110,21 +106,29 @@ async fn handler(
         }
     }
 
+    let (req_reader, mut req_writer) = tokio_pipe::pipe().unwrap();
+    let (mut res_reader, res_writer) = tokio_pipe::pipe().unwrap();
+
     let mut p = tokio::process::Command::new(command)
         .args(args)
-        /*
-         * todo: as a cli option?
-        .env("HTTP_SH_METHOD", req.method().as_str().to_ascii_uppercase())
-        .env("HTTP_SH_URI", req.uri().to_string())
-        .env(
-            "HTTP_SH_HEADERS",
-            serde_json::to_string(&headers_to_hashmap(&req.headers())).unwrap(),
-        )
-        */
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
+        .fd_mappings(vec![
+            FdMapping {
+                parent_fd: req_reader.as_raw_fd(),
+                child_fd: 3,
+            },
+            FdMapping {
+                parent_fd: res_writer.as_raw_fd(),
+                child_fd: 4,
+            },
+        ])
+        .unwrap()
         .spawn()
         .expect("failed to spawn");
+
+    drop(req_reader);
+    drop(res_writer);
 
     let (req_parts, req_body) = req.into_parts();
     let path = req_parts.uri.path().to_string();
@@ -158,28 +162,35 @@ async fn handler(
     );
 
     let write_stdin = async {
-        let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
-        let mut req_body = tokio_util::io::StreamReader::new(req_body);
-
-        let mut stdin = p.stdin.take().expect("failed to take stdin");
-        stdin
+        req_writer
             .write_all(format!("{}\n", &req_meta.to_string()).as_bytes())
             .await
-            .unwrap();
+            .or_else(|e| match e.kind() {
+                // ignore BrokenPipe errors, as the child process may have exited without
+                // reading the metadata
+                std::io::ErrorKind::BrokenPipe => Ok(()),
+                _ => Err(e),
+            })
+            .expect("failed to write request metadata");
+        drop(req_writer);
+
+        let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+        let mut req_body = tokio_util::io::StreamReader::new(req_body);
+        let mut stdin = p.stdin.take().expect("failed to take stdin");
         tokio::io::copy(&mut req_body, &mut stdin)
             .await
             .expect("streaming request body");
     };
 
     let read_stdout = async {
-        let stdout = p.stdout.take().expect("failed to take stdout");
-        let mut stdout = tokio::io::BufReader::new(stdout);
-        let mut line = String::new();
+        let mut buf = String::new();
+        res_reader.read_to_string(&mut buf).await.unwrap();
+        drop(res_reader);
 
-        let mut res_meta: Response = match stdout.read_line(&mut line).await {
-            Ok(0) => Response::default(),
-            Ok(_) => serde_json::from_str(&line).unwrap(),
-            Err(e) => panic!("{e:?}"),
+        let mut res_meta = if buf.is_empty() {
+            Response::default()
+        } else {
+            serde_json::from_str::<Response>(&buf).unwrap()
         };
 
         let status = res_meta.status.unwrap_or(200);
@@ -191,24 +202,6 @@ async fn handler(
             "{}",
             serde_json::json!({"app": "http.response", "detail": res_meta})
         );
-
-        if let Some(next) = res_meta.next {
-            let mut next_p = tokio::process::Command::new(next.command)
-                .args(next.args)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .expect("failed to spawn");
-
-            tokio::io::copy(
-                &mut stdout,
-                &mut next_p.stdin.take().expect("failed to take stdin"),
-            )
-            .await
-            .unwrap();
-            stdout =
-                tokio::io::BufReader::new(next_p.stdout.take().expect("failed to take stdout"));
-        }
 
         let mut res = hyper::Response::builder().status(status);
         {
@@ -227,7 +220,8 @@ async fn handler(
             }
         }
 
-        // todo: this should not return until the body stream has ended
+        let stdout = p.stdout.take().expect("failed to take stdout");
+        let stdout = tokio::io::BufReader::new(stdout);
         let stdout = tokio_util::io::ReaderStream::new(stdout);
         let stdout = hyper::Body::wrap_stream(stdout);
         res.body(stdout).expect("streaming response body")
@@ -267,8 +261,6 @@ mod tests {
     use indoc::indoc;
     use pretty_assertions::assert_eq;
 
-    use std::net::Ipv6Addr;
-
     #[tokio::test]
     async fn handler_get() {
         let req = hyper::Request::get("https://api.cross.stream/")
@@ -278,20 +270,15 @@ mod tests {
             req,
             "127.0.0.1:8080".parse().unwrap(),
             &None,
-            &"sh".into(),
-            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
+            &"echo".into(),
+            &vec!["hello world".into()],
         )
         .await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
         assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let body = std::str::from_utf8(&body).unwrap();
-        assert_eq!(
-            body,
-            indoc! {r#"
-            "GET"
-            "#}
-        );
+        assert_eq!(body, "hello world\n");
     }
 
     #[tokio::test]
@@ -304,19 +291,15 @@ mod tests {
             req,
             "127.0.0.1:8080".parse().unwrap(),
             &None,
-            &"sh".into(),
-            &vec!["-c".into(), r#"echo '{}'; tail -n1"#.into()],
+            &"cat".into(),
+            &vec![],
         )
         .await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
         assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let body = std::str::from_utf8(&body).unwrap();
-        assert_eq!(
-            body,
-            indoc! {r#"
-            zebody"#}
-        );
+        assert_eq!(body, "zebody");
     }
 
     #[tokio::test]
@@ -347,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn handler_response_meta() {
-        let req = hyper::Request::get("https://api.cross.stream/")
+        let req = hyper::Request::get("https://api.cross.stream/notfound")
             .body(hyper::Body::empty())
             .unwrap();
         let resp = handler(
@@ -358,8 +341,9 @@ mod tests {
             &vec![
                 "-c".into(),
                 r#"
-                echo '{"status":404,"headers":{"content-type":"text/markdown"}}'
-                echo '# Header'
+                echo '{"status":404,"headers":{"content-type":"text/markdown"}}' >&4
+                echo '# Not Found'
+                jq -r .path <&3
                 "#
                 .into(),
             ],
@@ -372,39 +356,8 @@ mod tests {
         assert_eq!(
             body,
             indoc! {r#"
-            # Header
-            "#}
-        );
-    }
-
-    #[tokio::test]
-    async fn handler_response_next() {
-        let req = hyper::Request::get("https://api.cross.stream/")
-            .body(hyper::Body::empty())
-            .unwrap();
-        let resp = handler(
-            req,
-            "127.0.0.1:8080".parse().unwrap(),
-            &None,
-            &"sh".into(),
-            &vec![
-                "-c".into(),
-                r#"
-                echo '{"next":{"command": "sh", "args": ["-c", "echo from next; cat"]}}'
-                echo 'from first'
-                "#
-                .into(),
-            ],
-        )
-        .await;
-        assert_eq!(resp.status(), hyper::StatusCode::OK);
-        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
-        let body = std::str::from_utf8(&body).unwrap();
-        assert_eq!(
-            body,
-            indoc! {r#"
-            from next
-            from first
+            # Not Found
+            /notfound
             "#}
         );
     }
@@ -428,8 +381,8 @@ mod tests {
             req,
             "127.0.0.1:8080".parse().unwrap(),
             &static_path,
-            &"sh".into(),
-            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
+            &"echo".into(),
+            &vec!["hello world".into()],
         )
         .await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
@@ -450,20 +403,15 @@ mod tests {
             req,
             "127.0.0.1:8080".parse().unwrap(),
             &static_path,
-            &"sh".into(),
-            &vec!["-c".into(), r#"echo '{}'; jq .method"#.into()],
+            &"echo".into(),
+            &vec!["hello world".into()],
         )
         .await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
         assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let body = std::str::from_utf8(&body).unwrap();
-        assert_eq!(
-            body,
-            indoc! {r#"
-            "GET"
-            "#}
-        );
+        assert_eq!(body, "hello world\n");
     }
 
     #[test]
@@ -471,10 +419,6 @@ mod tests {
         assert_eq!(
             parse_listen("127.0.0.1:8080"),
             SocketAddr::from(([127, 0, 0, 1], 8080))
-        );
-        assert_eq!(
-            parse_listen("localhost:8080"),
-            SocketAddr::from((Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 8080))
         );
         assert_eq!(
             parse_listen(":8080"),
