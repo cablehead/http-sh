@@ -8,9 +8,6 @@ use futures::TryStreamExt as _;
 
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
-use tokio::signal::unix::{signal, SignalKind};
-
-use hyper::service::{make_service_fn, service_fn};
 
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +19,7 @@ use command_fds::FdMapping;
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// Absolute or relative path to files to serve statically
+    /// Path to files to serve statically
     #[clap(short, long, value_parser)]
     static_path: Option<PathBuf>,
 
@@ -40,27 +37,70 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let make_svc = make_service_fn(|conn: &hyper::server::conn::AddrStream| {
-        let addr = conn.remote_addr();
+    let cert = load_certs("certs/certificates/ndyg.co.crt");
+    let key = load_keys("certs/certificates/ndyg.co.key");
+    let key = key[0].clone();
+
+    let mut config = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(cert, key)
+        .unwrap();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+
+    let addr = parse_listen(&args.listen);
+    let tcp_listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+
+    loop {
+        let acceptor = acceptor.clone();
         let args = args.clone();
-        let svc_fn = service_fn(move |req| {
+
+        let (tcp_stream, remote_addr) = tcp_listener.accept().await.unwrap();
+        let tls_stream = acceptor.accept(tcp_stream).await.unwrap();
+
+        let svc_fn = hyper::service::service_fn(move |req| {
             let args = args.clone();
             async move {
                 Ok::<hyper::Response<hyper::Body>, Infallible>(
-                    handler(req, addr, &args.static_path, &args.command, &args.args).await,
+                    handler(
+                        req,
+                        remote_addr,
+                        &args.static_path,
+                        &args.command,
+                        &args.args,
+                    )
+                    .await,
                 )
             }
         });
-        async move { Ok::<_, Infallible>(svc_fn) }
-    });
 
-    let addr = parse_listen(&args.listen);
-    let server = hyper::Server::bind(&addr).serve(make_svc);
+        tokio::task::spawn(async move {
+            hyper::server::conn::Http::new()
+                .serve_connection(tls_stream, svc_fn)
+                .await
+                .unwrap();
+        });
+    }
+
+    /*
+    use tokio::signal::unix::{signal, SignalKind};
+
+    async fn shutdown_signal() {
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        tokio::select! {
+            _ = sigint.recv() => {},
+            _ = sigterm.recv() => {},
+        }
+    }
 
     let graceful = server.with_graceful_shutdown(shutdown_signal());
     if let Err(e) = graceful.await {
         eprintln!("server error: {e}");
     }
+    */
 }
 
 async fn handler(
@@ -236,15 +276,6 @@ async fn handler(
     response
 }
 
-async fn shutdown_signal() {
-    let mut sigint = signal(SignalKind::interrupt()).unwrap();
-    let mut sigterm = signal(SignalKind::terminate()).unwrap();
-    tokio::select! {
-        _ = sigint.recv() => {},
-        _ = sigterm.recv() => {},
-    }
-}
-
 fn parse_listen(addr: &str) -> SocketAddr {
     // :8080 -> 127.0.0.1:8080
     let mut addr = addr.to_string();
@@ -253,6 +284,27 @@ fn parse_listen(addr: &str) -> SocketAddr {
     }
     let mut addrs_iter = addr.to_socket_addrs().unwrap();
     addrs_iter.next().unwrap()
+}
+
+fn load_certs(path: &str) -> Vec<rustls::Certificate> {
+    let rd = std::fs::File::open(path).unwrap();
+    let mut rd = std::io::BufReader::new(rd);
+    rustls_pemfile::certs(&mut rd)
+        .unwrap()
+        .into_iter()
+        .map(|x| rustls::Certificate(x))
+        .collect()
+}
+
+fn load_keys(path: &str) -> Vec<rustls::PrivateKey> {
+    let rd = std::fs::File::open(path).unwrap();
+    let mut rd = std::io::BufReader::new(rd);
+    // todo: support multiple key types
+    rustls_pemfile::ec_private_keys(&mut rd)
+        .unwrap()
+        .into_iter()
+        .map(|x| rustls::PrivateKey(x))
+        .collect()
 }
 
 #[cfg(test)]
