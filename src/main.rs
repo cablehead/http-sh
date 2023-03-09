@@ -42,14 +42,36 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let cert = load_certs("certs/certificates/ndyg.co.crt");
-    let key = load_keys("certs/certificates/ndyg.co.key");
-    let key = key[0].clone();
+    let pem = args.tls.as_ref().unwrap();
+    let pem = std::fs::File::open(pem).unwrap();
+    let mut pem = std::io::BufReader::new(pem);
+
+    let items = rustls_pemfile::read_all(&mut pem).unwrap();
+
+    let certs: Vec<rustls::Certificate> = items
+        .iter()
+        .filter_map(|item| match item {
+            rustls_pemfile::Item::X509Certificate(cert) => Some(rustls::Certificate(cert.to_vec())),
+            _ => None,
+        })
+        .collect();
+
+    let key = items
+        .into_iter()
+        .filter_map(|item| match item {
+            rustls_pemfile::Item::RSAKey(key) => Some(rustls::PrivateKey(key)),
+            rustls_pemfile::Item::PKCS8Key(key) => Some(rustls::PrivateKey(key)),
+            rustls_pemfile::Item::ECKey(key) => Some(rustls::PrivateKey(key)),
+            rustls_pemfile::Item::X509Certificate(_) => None,
+            _ => todo!(),
+        })
+        .next()
+        .unwrap();
 
     let mut config = rustls::ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(cert, key)
+        .with_single_cert(certs, key)
         .unwrap();
     config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
@@ -289,27 +311,6 @@ fn parse_listen(addr: &str) -> SocketAddr {
     }
     let mut addrs_iter = addr.to_socket_addrs().unwrap();
     addrs_iter.next().unwrap()
-}
-
-fn load_certs(path: &str) -> Vec<rustls::Certificate> {
-    let rd = std::fs::File::open(path).unwrap();
-    let mut rd = std::io::BufReader::new(rd);
-    rustls_pemfile::certs(&mut rd)
-        .unwrap()
-        .into_iter()
-        .map(rustls::Certificate)
-        .collect()
-}
-
-fn load_keys(path: &str) -> Vec<rustls::PrivateKey> {
-    let rd = std::fs::File::open(path).unwrap();
-    let mut rd = std::io::BufReader::new(rd);
-    // todo: support multiple key types
-    rustls_pemfile::ec_private_keys(&mut rd)
-        .unwrap()
-        .into_iter()
-        .map(rustls::PrivateKey)
-        .collect()
 }
 
 #[cfg(test)]
