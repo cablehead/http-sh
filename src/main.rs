@@ -23,8 +23,9 @@ struct Args {
     #[clap(short, long, value_parser)]
     static_path: Option<PathBuf>,
 
-    /// Path to PEM-encoded TLS private key and certificates. If not specified, http will be used.
-    #[clap(short, long, value_parser)]
+    /// Path to a PEM-encoded file with your TLS private key and certificates. When provided, the
+    /// server will use HTTPS, otherwise HTTP
+    #[clap(short, long, value_parser, value_name = "PEM_FILE")]
     tls: Option<PathBuf>,
 
     /// Address to listen on [HOST]:PORT
