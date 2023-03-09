@@ -8,9 +8,6 @@ use futures::TryStreamExt as _;
 
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
-use tokio::signal::unix::{signal, SignalKind};
-
-use hyper::service::{make_service_fn, service_fn};
 
 use serde::{Deserialize, Serialize};
 
@@ -22,9 +19,14 @@ use command_fds::FdMapping;
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// Absolute or relative path to files to serve statically
+    /// Path to files to serve statically
     #[clap(short, long, value_parser)]
     static_path: Option<PathBuf>,
+
+    /// Path to a PEM-encoded file with your TLS private key and certificates. When provided, the
+    /// server will use HTTPS, otherwise HTTP
+    #[clap(short, long, value_parser, value_name = "PEM_FILE")]
+    tls: Option<PathBuf>,
 
     /// Address to listen on [HOST]:PORT
     #[clap(short, long, value_parser, value_name = "ADDR")]
@@ -40,27 +42,67 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let make_svc = make_service_fn(|conn: &hyper::server::conn::AddrStream| {
-        let addr = conn.remote_addr();
+    let accept_tls = args.tls.clone().map(configure_tls);
+
+    let addr = parse_listen(&args.listen);
+    let tcp_listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+
+    loop {
         let args = args.clone();
-        let svc_fn = service_fn(move |req| {
+        let accept_tls = accept_tls.clone();
+
+        let (tcp_stream, remote_addr) = tcp_listener.accept().await.unwrap();
+
+        let svc_fn = hyper::service::service_fn(move |req| {
             let args = args.clone();
             async move {
                 Ok::<hyper::Response<hyper::Body>, Infallible>(
-                    handler(req, addr, &args.static_path, &args.command, &args.args).await,
+                    handler(
+                        req,
+                        remote_addr,
+                        &args.static_path,
+                        &args.command,
+                        &args.args,
+                    )
+                    .await,
                 )
             }
         });
-        async move { Ok::<_, Infallible>(svc_fn) }
-    });
 
-    let addr = parse_listen(&args.listen);
-    let server = hyper::Server::bind(&addr).serve(make_svc);
+        tokio::task::spawn(async move {
+            // todo: if I understood Rust better, itd be nice to avoid duplicating the call to
+            // Http::new().serve_connection
+            if let Some(acceptor) = accept_tls.clone() {
+                hyper::server::conn::Http::new()
+                    .serve_connection(acceptor.accept(tcp_stream).await.unwrap(), svc_fn)
+                    .await
+                    .unwrap();
+            } else {
+                hyper::server::conn::Http::new()
+                    .serve_connection(tcp_stream, svc_fn)
+                    .await
+                    .unwrap();
+            }
+        });
+    }
+
+    /*
+    use tokio::signal::unix::{signal, SignalKind};
+
+    async fn shutdown_signal() {
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        tokio::select! {
+            _ = sigint.recv() => {},
+            _ = sigterm.recv() => {},
+        }
+    }
 
     let graceful = server.with_graceful_shutdown(shutdown_signal());
     if let Err(e) = graceful.await {
         eprintln!("server error: {e}");
     }
+    */
 }
 
 async fn handler(
@@ -236,15 +278,6 @@ async fn handler(
     response
 }
 
-async fn shutdown_signal() {
-    let mut sigint = signal(SignalKind::interrupt()).unwrap();
-    let mut sigterm = signal(SignalKind::terminate()).unwrap();
-    tokio::select! {
-        _ = sigint.recv() => {},
-        _ = sigterm.recv() => {},
-    }
-}
-
 fn parse_listen(addr: &str) -> SocketAddr {
     // :8080 -> 127.0.0.1:8080
     let mut addr = addr.to_string();
@@ -253,6 +286,42 @@ fn parse_listen(addr: &str) -> SocketAddr {
     }
     let mut addrs_iter = addr.to_socket_addrs().unwrap();
     addrs_iter.next().unwrap()
+}
+
+fn configure_tls(pem: PathBuf) -> tokio_rustls::TlsAcceptor {
+    let pem = std::fs::File::open(pem).unwrap();
+    let mut pem = std::io::BufReader::new(pem);
+
+    let items = rustls_pemfile::read_all(&mut pem).unwrap();
+
+    let certs: Vec<rustls::Certificate> = items
+        .iter()
+        .filter_map(|item| match item {
+            rustls_pemfile::Item::X509Certificate(cert) => Some(rustls::Certificate(cert.to_vec())),
+            _ => None,
+        })
+        .collect();
+
+    let key = items
+        .into_iter()
+        .filter_map(|item| match item {
+            rustls_pemfile::Item::RSAKey(key) => Some(rustls::PrivateKey(key)),
+            rustls_pemfile::Item::PKCS8Key(key) => Some(rustls::PrivateKey(key)),
+            rustls_pemfile::Item::ECKey(key) => Some(rustls::PrivateKey(key)),
+            rustls_pemfile::Item::X509Certificate(_) => None,
+            _ => todo!(),
+        })
+        .next()
+        .unwrap();
+
+    let mut config = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .unwrap();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config))
 }
 
 #[cfg(test)]
