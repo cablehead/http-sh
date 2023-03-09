@@ -292,7 +292,7 @@ fn load_certs(path: &str) -> Vec<rustls::Certificate> {
     rustls_pemfile::certs(&mut rd)
         .unwrap()
         .into_iter()
-        .map(|x| rustls::Certificate(x))
+        .map(rustls::Certificate)
         .collect()
 }
 
@@ -303,7 +303,7 @@ fn load_keys(path: &str) -> Vec<rustls::PrivateKey> {
     rustls_pemfile::ec_private_keys(&mut rd)
         .unwrap()
         .into_iter()
-        .map(|x| rustls::PrivateKey(x))
+        .map(rustls::PrivateKey)
         .collect()
 }
 
