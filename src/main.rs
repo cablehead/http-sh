@@ -23,6 +23,10 @@ struct Args {
     #[clap(short, long, value_parser)]
     static_path: Option<PathBuf>,
 
+    /// Path to PEM-encoded TLS private key and certificates. If not specified, http will be used.
+    #[clap(short, long, value_parser)]
+    tls: Option<PathBuf>,
+
     /// Address to listen on [HOST]:PORT
     #[clap(short, long, value_parser, value_name = "ADDR")]
     listen: String,
