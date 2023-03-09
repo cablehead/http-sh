@@ -70,8 +70,9 @@ async fn main() {
         });
 
         tokio::task::spawn(async move {
-            let accept_tls = accept_tls.clone();
-            if let Some(acceptor) = accept_tls {
+            // todo: if I understood Rust better, itd be nice to avoid duplicating the call to
+            // Http::new().serve_connection
+            if let Some(acceptor) = accept_tls.clone() {
                 hyper::server::conn::Http::new()
                     .serve_connection(acceptor.accept(tcp_stream).await.unwrap(), svc_fn)
                     .await
