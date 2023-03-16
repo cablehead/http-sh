@@ -304,14 +304,13 @@ fn configure_tls(pem: PathBuf) -> tokio_rustls::TlsAcceptor {
 
     let key = items
         .into_iter()
-        .filter_map(|item| match item {
+        .find_map(|item| match item {
             rustls_pemfile::Item::RSAKey(key) => Some(rustls::PrivateKey(key)),
             rustls_pemfile::Item::PKCS8Key(key) => Some(rustls::PrivateKey(key)),
             rustls_pemfile::Item::ECKey(key) => Some(rustls::PrivateKey(key)),
             rustls_pemfile::Item::X509Certificate(_) => None,
             _ => todo!(),
         })
-        .next()
         .unwrap();
 
     let mut config = rustls::ServerConfig::builder()
