@@ -17,10 +17,7 @@ pub enum Listener {
 impl Listener {
     pub async fn accept(
         &mut self,
-    ) -> io::Result<(
-        AsyncReadWriteBox,
-        Option<std::net::SocketAddr>,
-    )> {
+    ) -> io::Result<(AsyncReadWriteBox, Option<std::net::SocketAddr>)> {
         match self {
             Listener::Tcp(listener) => {
                 let (stream, addr) = listener.accept().await?;
