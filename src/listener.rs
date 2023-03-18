@@ -34,12 +34,12 @@ impl Listener {
     }
 
     pub async fn bind(addr: &str) -> io::Result<Self> {
-        if addr.starts_with("/") || addr.starts_with(".") {
+        if addr.starts_with('/') || addr.starts_with('.') {
             let listener = UnixListener::bind(addr)?;
             Ok(Listener::Unix(listener))
         } else {
             let mut addr = addr.to_owned();
-            if addr.starts_with(":") {
+            if addr.starts_with(':') {
                 addr = format!("127.0.0.1{}", addr);
             };
             let listener = TcpListener::bind(addr).await?;
@@ -47,6 +47,7 @@ impl Listener {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn connect(&self) -> io::Result<AsyncReadWriteBox> {
         match self {
             Listener::Tcp(listener) => {
