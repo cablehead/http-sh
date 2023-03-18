@@ -346,14 +346,7 @@ mod tests {
             .header("Last-Event-ID", 5)
             .body("zebody".into())
             .unwrap();
-        let resp = handler(
-            req,
-            None,
-            &None,
-            &"cat".into(),
-            &vec![],
-        )
-        .await;
+        let resp = handler(req, None, &None, &"cat".into(), &vec![]).await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
         assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
