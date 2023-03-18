@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
@@ -15,6 +15,8 @@ use clap::Parser;
 
 use command_fds::tokio::CommandFdAsyncExt;
 use command_fds::FdMapping;
+
+mod listener;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -44,14 +46,13 @@ async fn main() {
 
     let accept_tls = args.tls.clone().map(configure_tls);
 
-    let addr = parse_listen(&args.listen);
-    let tcp_listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let mut listener = listener::Listener::bind(&args.listen).await.unwrap();
 
     loop {
         let args = args.clone();
         let accept_tls = accept_tls.clone();
 
-        let (tcp_stream, remote_addr) = tcp_listener.accept().await.unwrap();
+        let (tcp_stream, remote_addr) = listener.accept().await.unwrap();
 
         let svc_fn = hyper::service::service_fn(move |req| {
             let args = args.clone();
@@ -107,7 +108,7 @@ async fn main() {
 
 async fn handler(
     req: hyper::Request<hyper::Body>,
-    addr: SocketAddr,
+    addr: Option<SocketAddr>,
     static_path: &Option<PathBuf>,
     command: &String,
     args: &Vec<String>,
@@ -118,8 +119,8 @@ async fn handler(
         #[serde(with = "http_serde::method")]
         method: http::method::Method,
         proto: String,
-        remote_ip: std::net::IpAddr,
-        remote_port: u16,
+        remote_ip: Option<std::net::IpAddr>,
+        remote_port: Option<u16>,
         #[serde(with = "http_serde::header_map")]
         headers: http::header::HeaderMap,
         #[serde(with = "http_serde::uri")]
@@ -189,8 +190,8 @@ async fn handler(
     let req_meta = serde_json::json!(Request {
         request_id,
         proto: format!("{:?}", req_parts.version),
-        remote_ip: addr.ip(),
-        remote_port: addr.port(),
+        remote_ip: addr.as_ref().map(|a| a.ip()),
+        remote_port: addr.as_ref().map(|a| a.port()),
         method: req_parts.method,
         headers: req_parts.headers,
         uri: req_parts.uri,
@@ -278,16 +279,6 @@ async fn handler(
     response
 }
 
-fn parse_listen(addr: &str) -> SocketAddr {
-    // :8080 -> 127.0.0.1:8080
-    let mut addr = addr.to_string();
-    if addr.starts_with(':') {
-        addr = format!("127.0.0.1{}", addr)
-    }
-    let mut addrs_iter = addr.to_socket_addrs().unwrap();
-    addrs_iter.next().unwrap()
-}
-
 fn configure_tls(pem: PathBuf) -> tokio_rustls::TlsAcceptor {
     let pem = std::fs::File::open(pem).unwrap();
     let mut pem = std::io::BufReader::new(pem);
@@ -304,14 +295,13 @@ fn configure_tls(pem: PathBuf) -> tokio_rustls::TlsAcceptor {
 
     let key = items
         .into_iter()
-        .filter_map(|item| match item {
+        .find_map(|item| match item {
             rustls_pemfile::Item::RSAKey(key) => Some(rustls::PrivateKey(key)),
             rustls_pemfile::Item::PKCS8Key(key) => Some(rustls::PrivateKey(key)),
             rustls_pemfile::Item::ECKey(key) => Some(rustls::PrivateKey(key)),
             rustls_pemfile::Item::X509Certificate(_) => None,
             _ => todo!(),
         })
-        .next()
         .unwrap();
 
     let mut config = rustls::ServerConfig::builder()
@@ -337,7 +327,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            "127.0.0.1:8080".parse().unwrap(),
+            None,
             &None,
             &"echo".into(),
             &vec!["hello world".into()],
@@ -356,14 +346,7 @@ mod tests {
             .header("Last-Event-ID", 5)
             .body("zebody".into())
             .unwrap();
-        let resp = handler(
-            req,
-            "127.0.0.1:8080".parse().unwrap(),
-            &None,
-            &"cat".into(),
-            &vec![],
-        )
-        .await;
+        let resp = handler(req, None, &None, &"cat".into(), &vec![]).await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
         assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
@@ -378,7 +361,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            "127.0.0.1:8080".parse().unwrap(),
+            None,
             &None,
             &"sh".into(),
             &vec![
@@ -404,7 +387,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            "127.0.0.1:8080".parse().unwrap(),
+            None,
             &None,
             &"sh".into(),
             &vec![
@@ -448,7 +431,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            "127.0.0.1:8080".parse().unwrap(),
+            None,
             &static_path,
             &"echo".into(),
             &vec!["hello world".into()],
@@ -470,7 +453,7 @@ mod tests {
             .unwrap();
         let resp = handler(
             req,
-            "127.0.0.1:8080".parse().unwrap(),
+            None,
             &static_path,
             &"echo".into(),
             &vec!["hello world".into()],
@@ -481,17 +464,5 @@ mod tests {
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let body = std::str::from_utf8(&body).unwrap();
         assert_eq!(body, "hello world\n");
-    }
-
-    #[test]
-    fn test_parse_listen() {
-        assert_eq!(
-            parse_listen("127.0.0.1:8080"),
-            SocketAddr::from(([127, 0, 0, 1], 8080))
-        );
-        assert_eq!(
-            parse_listen(":8080"),
-            SocketAddr::from(([127, 0, 0, 1], 8080))
-        );
     }
 }
