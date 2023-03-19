@@ -58,6 +58,24 @@ impl Listener {
             }
         }
     }
+
+    pub fn addr_string(&self) -> String {
+        match self {
+            Listener::Tcp(listener) => {
+                let addr = listener.local_addr().unwrap();
+                format!("{}:{}", addr.ip(), addr.port())
+            }
+            Listener::Unix(listener) => listener
+                .local_addr()
+                .unwrap()
+                .as_pathname()
+                .unwrap()
+                .to_path_buf()
+                .into_os_string()
+                .into_string()
+                .unwrap(),
+        }
+    }
 }
 
 #[cfg(test)]
