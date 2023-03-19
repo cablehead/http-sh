@@ -31,7 +31,7 @@ struct Args {
     tls: Option<PathBuf>,
 
     /// Address to listen on [HOST]:PORT or <path> for Unix domain socket
-    #[clap(value_parser, value_name = "LISTEN-ADDR")]
+    #[clap(value_parser, value_name = "LISTEN_ADDR")]
     listen: String,
 
     #[clap(value_parser)]
