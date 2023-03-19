@@ -60,6 +60,22 @@ impl Listener {
     }
 }
 
+impl std::fmt::Display for Listener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Listener::Tcp(listener) => {
+                let addr = listener.local_addr().unwrap();
+                write!(f, "{}:{}", addr.ip(), addr.port())
+            }
+            Listener::Unix(listener) => {
+                let addr = listener.local_addr().unwrap();
+                let path = addr.as_pathname().unwrap();
+                write!(f, "{}", path.display())
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
