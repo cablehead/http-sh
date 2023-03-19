@@ -9,7 +9,7 @@ use futures::TryStreamExt as _;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 
-use serde::{Deserialize, Serialize};
+use serde::{json, Deserialize, Serialize};
 
 use clap::Parser;
 
@@ -50,7 +50,7 @@ async fn main() {
 
     println!(
         "{}",
-        serde_json::json!({"stamp": scru128::new(), "message": "start", "address": format!("{}", listener)})
+        json!({"stamp": scru128::new(), "message": "start", "address": format!("{}", listener)})
     );
 
     loop {
@@ -192,7 +192,7 @@ async fn handler(
 
     let request_id = scru128::new();
 
-    let req_meta = serde_json::json!(Request {
+    let req_meta = json!(Request {
         request_id,
         proto: format!("{:?}", req_parts.version),
         remote_ip: addr.as_ref().map(|a| a.ip()),
@@ -204,10 +204,7 @@ async fn handler(
         query,
     });
 
-    println!(
-        "{}",
-        serde_json::json!({"app": "http.request", "detail": req_meta})
-    );
+    println!("{}", json!({"app": "http.request", "detail": req_meta}));
 
     let write_stdin = async {
         req_writer
@@ -238,7 +235,7 @@ async fn handler(
         let mut res_meta = if buf.is_empty() {
             Response::default()
         } else {
-            serde_json::from_str::<Response>(&buf).unwrap()
+            from_str::<Response>(&buf).unwrap()
         };
 
         let status = res_meta.status.unwrap_or(200);
@@ -246,10 +243,7 @@ async fn handler(
         res_meta.request_id = Some(request_id);
         res_meta.status = Some(status);
 
-        println!(
-            "{}",
-            serde_json::json!({"app": "http.response", "detail": res_meta})
-        );
+        println!("{}", json!({"app": "http.response", "detail": res_meta}));
 
         let mut res = hyper::Response::builder().status(status);
         {
