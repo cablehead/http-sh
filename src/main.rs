@@ -30,8 +30,8 @@ struct Args {
     #[clap(short, long, value_parser, value_name = "PEM_FILE")]
     tls: Option<PathBuf>,
 
-    /// Address to listen on [HOST]:PORT
-    #[clap(short, long, value_parser, value_name = "ADDR")]
+    /// Address to listen on [HOST]:PORT or <path> for Unix domain socket
+    #[clap(value_parser, value_name = "LISTEN-ADDR")]
     listen: String,
 
     #[clap(value_parser)]
@@ -47,6 +47,11 @@ async fn main() {
     let accept_tls = args.tls.clone().map(configure_tls);
 
     let mut listener = listener::Listener::bind(&args.listen).await.unwrap();
+
+    println!(
+        "{}",
+        serde_json::json!({"stamp": scru128::new(), "message": "start", "address": format!("{}", listener)})
+    );
 
     loop {
         let args = args.clone();
