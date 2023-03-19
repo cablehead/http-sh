@@ -30,7 +30,7 @@ struct Args {
     #[clap(short, long, value_parser, value_name = "PEM_FILE")]
     tls: Option<PathBuf>,
 
-    /// Address to listen on [HOST]:PORT or <path> for Unix domain socket
+    /// Address to listen on [HOST]:PORT or <PATH> for Unix domain socket
     #[clap(value_parser, value_name = "LISTEN_ADDR")]
     listen: String,
 
