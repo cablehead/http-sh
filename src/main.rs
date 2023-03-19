@@ -9,7 +9,8 @@ use futures::TryStreamExt as _;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 
-use serde::{json, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use clap::Parser;
 
@@ -235,7 +236,7 @@ async fn handler(
         let mut res_meta = if buf.is_empty() {
             Response::default()
         } else {
-            from_str::<Response>(&buf).unwrap()
+            serde_json::from_str::<Response>(&buf).unwrap()
         };
 
         let status = res_meta.status.unwrap_or(200);
