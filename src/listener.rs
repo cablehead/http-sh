@@ -58,22 +58,20 @@ impl Listener {
             }
         }
     }
+}
 
-    pub fn addr_string(&self) -> String {
+impl std::fmt::Display for Listener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Listener::Tcp(listener) => {
                 let addr = listener.local_addr().unwrap();
-                format!("{}:{}", addr.ip(), addr.port())
+                write!(f, "{}:{}", addr.ip(), addr.port())
             }
-            Listener::Unix(listener) => listener
-                .local_addr()
-                .unwrap()
-                .as_pathname()
-                .unwrap()
-                .to_path_buf()
-                .into_os_string()
-                .into_string()
-                .unwrap(),
+            Listener::Unix(listener) => {
+                let addr = listener.local_addr().unwrap();
+                let path = addr.as_pathname().unwrap();
+                write!(f, "{}", path.display())
+            }
         }
     }
 }
