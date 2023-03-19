@@ -12,7 +12,7 @@ futures = "0.3"
 tokio-util = { version = "0.7.3", features = ["full"] }
 url = "2.3.1"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.83"
+serde_json = { version = "1.0.83", features = ["preserve_order"] }
 http = "0.2.8"
 http-serde = "1.1.0"
 scru128 = { version = "2.2.0", features = ["serde"] }
