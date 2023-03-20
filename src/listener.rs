@@ -7,7 +7,7 @@ pub trait AsyncReadWrite: AsyncRead + AsyncWrite {}
 
 impl<T: AsyncRead + AsyncWrite> AsyncReadWrite for T {}
 
-type AsyncReadWriteBox = Box<dyn AsyncReadWrite + Unpin + Send>;
+pub type AsyncReadWriteBox = Box<dyn AsyncReadWrite + Unpin + Send>;
 
 pub enum Listener {
     Tcp(TcpListener),

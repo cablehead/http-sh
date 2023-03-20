@@ -47,18 +47,52 @@ async fn main() {
 
     let accept_tls = args.tls.clone().map(configure_tls);
 
-    let mut listener = listener::Listener::bind(&args.listen).await.unwrap();
+    let mut server = listener::Listener::bind(&args.listen).await.unwrap();
+
+    let is_unix = match server {
+        listener::Listener::Tcp(_) => false,
+        listener::Listener::Unix(_) => true,
+    };
+
+    /*
+    use tokio::signal::unix::{signal, SignalKind};
+
+    async fn shutdown_signal() {
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        tokio::select! {
+            _ = sigint.recv() => {},
+            _ = sigterm.recv() => {},
+        }
+    }
+
+    tokio::select! {
+        result = listener.accept() => {
+            let (stream, remote_addr) = result.unwrap();
+            println!("Got connection");
+        },
+        _ = shutdown_signal() => {
+            println!("Received shutdown signal. Shutting down gracefully...");
+        },
+    }
+    */
 
     println!(
         "{}",
-        json!({"stamp": scru128::new(), "message": "start", "address": format!("{}", listener)})
+        json!({"stamp": scru128::new(), "message": "start", "address": format!("{}", server)})
     );
 
     loop {
         let args = args.clone();
         let accept_tls = accept_tls.clone();
 
-        let (tcp_stream, remote_addr) = listener.accept().await.unwrap();
+        let (stream, remote_addr) = server.accept().await.unwrap();
+
+        let stream = if let Some(acceptor) = accept_tls {
+            Box::new(acceptor.accept(stream).await.unwrap())
+        } else {
+            stream
+        };
 
         let svc_fn = hyper::service::service_fn(move |req| {
             let args = args.clone();
@@ -77,39 +111,27 @@ async fn main() {
         });
 
         tokio::task::spawn(async move {
-            // todo: if I understood Rust better, itd be nice to avoid duplicating the call to
-            // Http::new().serve_connection
-            if let Some(acceptor) = accept_tls.clone() {
-                hyper::server::conn::Http::new()
-                    .serve_connection(acceptor.accept(tcp_stream).await.unwrap(), svc_fn)
-                    .await
-                    .unwrap();
-            } else {
-                hyper::server::conn::Http::new()
-                    .serve_connection(tcp_stream, svc_fn)
-                    .await
-                    .unwrap();
+            match hyper::server::conn::Http::new()
+                .serve_connection(stream, svc_fn)
+                .await
+            {
+                Ok(_) => (),
+                Err(e) => {
+                    if !is_unix {
+                        panic!("unexpected error: {:?}", e)
+                    }
+                    // hyper returns an error attempting to `Shutdown` a unix domain socket
+                    // connection
+                    // https://github.com/hyperium/hyper/blob/master/src/error.rs#L49-L51
+                    let e: std::io::Error = *e.into_cause().unwrap().downcast().unwrap();
+                    match e.kind() {
+                        std::io::ErrorKind::NotConnected => (),
+                        _ => panic!("unexpected error: {:?}", e),
+                    }
+                }
             }
         });
     }
-
-    /*
-    use tokio::signal::unix::{signal, SignalKind};
-
-    async fn shutdown_signal() {
-        let mut sigint = signal(SignalKind::interrupt()).unwrap();
-        let mut sigterm = signal(SignalKind::terminate()).unwrap();
-        tokio::select! {
-            _ = sigint.recv() => {},
-            _ = sigterm.recv() => {},
-        }
-    }
-
-    let graceful = server.with_graceful_shutdown(shutdown_signal());
-    if let Err(e) = graceful.await {
-        eprintln!("server error: {e}");
-    }
-    */
 }
 
 async fn handler(
