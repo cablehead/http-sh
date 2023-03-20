@@ -115,7 +115,7 @@ async fn main() {
                 .serve_connection(stream, svc_fn)
                 .await
             {
-                Ok(_) => return,
+                Ok(_) => (),
                 Err(e) => {
                     if !is_unix {
                         panic!("unexpected error: {:?}", e)
@@ -125,7 +125,7 @@ async fn main() {
                     // https://github.com/hyperium/hyper/blob/master/src/error.rs#L49-L51
                     let e: std::io::Error = *e.into_cause().unwrap().downcast().unwrap();
                     match e.kind() {
-                        std::io::ErrorKind::NotConnected => return,
+                        std::io::ErrorKind::NotConnected => (),
                         _ => panic!("unexpected error: {:?}", e),
                     }
                 }
