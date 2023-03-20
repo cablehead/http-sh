@@ -9,7 +9,7 @@
 ### GET: Hello world
 
 ```bash
-$ http-sh --listen :5000 -- echo Hello world
+$ http-sh :5000 -- echo Hello world
 $ curl -s localhost:5000
 Hello world
 ```
@@ -17,7 +17,7 @@ Hello world
 ### POST: echo
 
 ```bash
-$ http-sh --listen :5000 -- cat
+$ http-sh :5000 -- cat
 $ curl -s -d Hai localhost:5000
 Hai
 ```
@@ -29,7 +29,7 @@ The Request metadata is available as JSON on file descriptor 3.
 Pairs well with [`jq`](https://github.com/stedolan/jq)
 
 ```bash
-$ http-sh --listen :5000 -- bash -c 'jq <&3'
+$ http-sh :5000 -- bash -c 'jq <&3'
 $ curl -s localhost:5000
 {
   "headers": {
@@ -47,7 +47,7 @@ $ curl -s localhost:5000
   "uri": "/"
 }
 
-$ http-sh --listen :5000 -- bash -c 'echo hello: $(jq -r .path <&3)'
+$ http-sh :5000 -- bash -c 'echo hello: $(jq -r .path <&3)'
 $ curl -s localhost:5000/yello
 hello: /yello
 ```
@@ -60,7 +60,7 @@ Currently you can set the Response `status` and `headers`.
 Pairs well with [`jo`](https://github.com/jpmens/jo)
 
 ```
-$ http-sh --listen :5000 -- bash -c 'jo status=404 >&4; echo sorry, eh'
+$ http-sh :5000 -- bash -c 'jo status=404 >&4; echo sorry, eh'
 $ curl -si localhost:5000
 HTTP/1.1 404 Not Found
 content-type: text/plain
@@ -74,7 +74,7 @@ Note, for streaming responses, you'll want to close fd 4, so the Response is
 initiated.
 
 ```
-$ http-sh --listen :5000 -- bash -c 'exec 4>&-; while true ; do date; sleep 1; done'
+$ http-sh :5000 -- bash -c 'exec 4>&-; while true ; do date; sleep 1; done'
 $ curl -s localhost:5000
 Sat Feb 25 00:31:41 EST 2023
 Sat Feb 25 00:31:43 EST 2023
@@ -89,7 +89,7 @@ Sat Feb 25 00:31:46 EST 2023
 Pairs well with [`xcat`](https://github.com/cablehead/xcat)
 
 ```bash
-$ http-sh --listen :5000 -- bash -c '
+$ http-sh :5000 -- bash -c '
     jo headers="$(jo "content-type"="text/event-stream")" >&4
     exec 4>&-
     tail -F source.json | xcat -- bash -c "sed '\''s/^/data: /g'\''; echo;"
