@@ -64,8 +64,9 @@ fn serve_unix() {
     let _exit_status = serve.wait().unwrap();
     // println!("exit_status: {:?}", exit_status);
 
+    // read remaining logs
     stdout.read_to_string(&mut read).unwrap();
-    println!("remaining logs: {:?}", read);
+    // println!("remaining logs: {}", read);
 
     let mut stderr = String::new();
     let n = serve
@@ -111,8 +112,9 @@ fn serve_tcp() {
     let _exit_status = serve.wait().unwrap();
     // println!("exit_status: {:?}", exit_status);
 
+    // read remaining logs
     stdout.read_to_string(&mut read).unwrap();
-    println!("remaining logs: {:?}", read);
+    // println!("remaining logs: {}", read);
 
     let mut stderr = String::new();
     let n = serve
