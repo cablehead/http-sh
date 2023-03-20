@@ -49,6 +49,31 @@ async fn main() {
 
     let mut listener = listener::Listener::bind(&args.listen).await.unwrap();
 
+    /*
+    use tokio::signal::unix::{signal, SignalKind};
+
+    async fn shutdown_signal() {
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        tokio::select! {
+            _ = sigint.recv() => {},
+            _ = sigterm.recv() => {},
+        }
+    }
+
+    tokio::select! {
+        result = listener.accept() => {
+            let (stream, remote_addr) = result.unwrap();
+            println!("Got connection");
+        },
+        _ = shutdown_signal() => {
+            println!("Received shutdown signal. Shutting down gracefully...");
+        },
+    }
+
+    return;
+    */
+
     println!(
         "{}",
         json!({"stamp": scru128::new(), "message": "start", "address": format!("{}", listener)})
@@ -59,6 +84,8 @@ async fn main() {
         let accept_tls = accept_tls.clone();
 
         let (tcp_stream, remote_addr) = listener.accept().await.unwrap();
+
+        println!("Got connection");
 
         let svc_fn = hyper::service::service_fn(move |req| {
             let args = args.clone();
@@ -92,24 +119,6 @@ async fn main() {
             }
         });
     }
-
-    /*
-    use tokio::signal::unix::{signal, SignalKind};
-
-    async fn shutdown_signal() {
-        let mut sigint = signal(SignalKind::interrupt()).unwrap();
-        let mut sigterm = signal(SignalKind::terminate()).unwrap();
-        tokio::select! {
-            _ = sigint.recv() => {},
-            _ = sigterm.recv() => {},
-        }
-    }
-
-    let graceful = server.with_graceful_shutdown(shutdown_signal());
-    if let Err(e) = graceful.await {
-        eprintln!("server error: {e}");
-    }
-    */
 }
 
 async fn handler(
