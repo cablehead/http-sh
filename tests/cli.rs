@@ -49,8 +49,6 @@ fn serve_unix() {
     let mut stdout = std::io::BufReader::new(stdout);
     let mut read = String::new();
     stdout.read_line(&mut read).unwrap();
-    // todo: assert `address` in startup log line
-    // println!("line: {:?}", line);
 
     let got = Command::new("curl")
         .arg("-s")
@@ -67,7 +65,54 @@ fn serve_unix() {
     // println!("exit_status: {:?}", exit_status);
 
     stdout.read_to_string(&mut read).unwrap();
-    println!("line: {:?}", read);
+    println!("remaining logs: {:?}", read);
+
+    let mut stderr = String::new();
+    let n = serve
+        .stderr
+        .as_mut()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert_eq!(0, n, "stderr is not empty: \n---\n{}---\n", stderr);
+}
+
+#[test]
+fn serve_tcp() {
+    let http_sh = cargo_bin("http-sh");
+    let want = "Hello from server!";
+
+    let mut serve = Command::new(http_sh)
+        .arg(":0")
+        .arg("--")
+        .arg("printf")
+        .arg(want)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // read startup log line to ensure serve is ready
+    let stdout = serve.stdout.take().unwrap();
+    let mut stdout = std::io::BufReader::new(stdout);
+    let mut read = String::new();
+    stdout.read_line(&mut read).unwrap();
+    let log: serde_json::Value = serde_json::from_str(&read).unwrap();
+
+    let got = Command::new("curl")
+        .arg("-s")
+        .arg(log["address"].as_str().unwrap())
+        .output()
+        .unwrap();
+    assert_eq!(want.as_bytes(), got.stdout);
+
+    serve.kill().unwrap();
+    // todo: graceful shutdown
+    let _exit_status = serve.wait().unwrap();
+    // println!("exit_status: {:?}", exit_status);
+
+    stdout.read_to_string(&mut read).unwrap();
+    println!("remaining logs: {:?}", read);
 
     let mut stderr = String::new();
     let n = serve
