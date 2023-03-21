@@ -25,6 +25,15 @@ fn cargo_bin(name: &str) -> std::path::PathBuf {
         .unwrap_or_else(|| target_dir().join(format!("{}{}", name, std::env::consts::EXE_SUFFIX)))
 }
 
+fn run_curl(args: Vec<&str>) -> std::process::Output {
+    let mut command = Command::new("curl");
+    command.arg("-s");
+    for arg in args {
+        command.arg(arg);
+    }
+    command.output().unwrap()
+}
+
 #[test]
 fn serve_unix() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -49,15 +58,27 @@ fn serve_unix() {
     let mut stdout = std::io::BufReader::new(stdout);
     let mut read = String::new();
     stdout.read_line(&mut read).unwrap();
+    read.clear();
 
-    let got = Command::new("curl")
-        .arg("-s")
-        .arg("--unix-socket")
-        .arg(path)
-        .arg("http://a-host")
-        .output()
-        .unwrap();
+    let got = run_curl(vec![
+        "--http1.1",
+        "--unix-socket",
+        path,
+        "http://localhost/",
+    ]);
     assert_eq!(want.as_bytes(), got.stdout);
+
+    // next , parse got.stdout to a Response and assert HOST header
+    let log: http_sh::Request = serde_json::from_slice(&got.stdout).unwrap();
+    println!("{:?}", log);
+
+    let got = run_curl(vec![
+        "--http2-prior-knowledge",
+        "--unix-socket",
+        path,
+        "http://localhost/",
+    ]);
+    println!("got: {:?}", got);
 
     serve.kill().unwrap();
     // todo: graceful shutdown
@@ -66,7 +87,7 @@ fn serve_unix() {
 
     // read remaining logs
     stdout.read_to_string(&mut read).unwrap();
-    // println!("remaining logs: {}", read);
+    println!("remaining logs:\n{}", read);
 
     let mut stderr = String::new();
     let n = serve

@@ -9,7 +9,6 @@ use futures::TryStreamExt as _;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use clap::Parser;
@@ -18,6 +17,7 @@ use command_fds::tokio::CommandFdAsyncExt;
 use command_fds::FdMapping;
 
 mod listener;
+use http_sh::{Request, Response};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -141,32 +141,6 @@ async fn handler(
     command: &String,
     args: &Vec<String>,
 ) -> hyper::Response<hyper::Body> {
-    #[derive(Serialize, Deserialize)]
-    struct Request {
-        request_id: scru128::Scru128Id,
-        #[serde(with = "http_serde::method")]
-        method: http::method::Method,
-        proto: String,
-        remote_ip: Option<std::net::IpAddr>,
-        remote_port: Option<u16>,
-        #[serde(with = "http_serde::header_map")]
-        headers: http::header::HeaderMap,
-        #[serde(with = "http_serde::uri")]
-        uri: http::Uri,
-        path: String,
-        query: HashMap<String, String>,
-    }
-
-    #[derive(Default, Debug, Serialize, Deserialize)]
-    struct Response {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        request_id: Option<scru128::Scru128Id>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        status: Option<u16>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        headers: Option<std::collections::HashMap<String, String>>,
-    }
-
     if let Some(static_path) = static_path {
         let resolved = hyper_staticfile::resolve(&static_path, &req).await.unwrap();
         if let hyper_staticfile::ResolveResult::Found(_, _, _) = resolved {
@@ -213,10 +187,9 @@ async fn handler(
         })
         .unwrap_or_else(HashMap::new);
 
-    let request_id = scru128::new();
-
-    let req_meta = json!(Request {
-        request_id,
+    let mut req_meta = Request {
+        stamp: scru128::new(),
+        message: "request".to_string(),
         proto: format!("{:?}", req_parts.version),
         remote_ip: addr.as_ref().map(|a| a.ip()),
         remote_port: addr.as_ref().map(|a| a.port()),
@@ -225,13 +198,14 @@ async fn handler(
         uri: req_parts.uri,
         path,
         query,
-    });
+        response: None,
+    };
 
-    println!("{}", json!({"app": "http.request", "detail": req_meta}));
+    let req_json = serde_json::to_string(&req_meta).unwrap();
 
     let write_stdin = async {
         req_writer
-            .write_all(format!("{}\n", &req_meta.to_string()).as_bytes())
+            .write_all(format!("{}\n", &req_json).as_bytes())
             .await
             .or_else(|e| match e.kind() {
                 // ignore BrokenPipe errors, as the child process may have exited without
@@ -261,12 +235,10 @@ async fn handler(
             serde_json::from_str::<Response>(&buf).unwrap()
         };
 
+        req_meta.response = Some(res_meta.clone());
+
         let status = res_meta.status.unwrap_or(200);
-
-        res_meta.request_id = Some(request_id);
         res_meta.status = Some(status);
-
-        println!("{}", json!({"app": "http.response", "detail": res_meta}));
 
         let mut res = hyper::Response::builder().status(status);
         {
@@ -284,6 +256,8 @@ async fn handler(
                 res_headers.insert("content-type", "text/plain".parse().unwrap());
             }
         }
+
+        println!("{}", serde_json::to_string(&req_meta).unwrap());
 
         let stdout = p.stdout.take().expect("failed to take stdout");
         let stdout = tokio::io::BufReader::new(stdout);
