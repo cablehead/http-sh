@@ -176,6 +176,16 @@ async fn handler(
     drop(res_writer);
 
     let (req_parts, req_body) = req.into_parts();
+
+    let uri = req_parts.uri.clone().into_parts();
+
+    let authority: Option<String> = uri.authority.as_ref().map(|a| a.to_string()).or_else(|| {
+        req_parts
+            .headers
+            .get("host")
+            .map(|a| a.to_str().unwrap().to_owned())
+    });
+
     let path = req_parts.uri.path().to_string();
     let query: HashMap<String, String> = req_parts
         .uri
@@ -191,9 +201,10 @@ async fn handler(
         stamp: scru128::new(),
         message: "request".to_string(),
         proto: format!("{:?}", req_parts.version),
+        method: req_parts.method,
+        authority,
         remote_ip: addr.as_ref().map(|a| a.ip()),
         remote_port: addr.as_ref().map(|a| a.port()),
-        method: req_parts.method,
         headers: req_parts.headers,
         uri: req_parts.uri,
         path,

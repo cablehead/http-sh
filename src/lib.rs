@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 pub struct Request {
     pub stamp: scru128::Scru128Id,
     pub message: String,
+    pub proto: String,
     #[serde(with = "http_serde::method")]
     pub method: http::method::Method,
-    pub proto: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_ip: Option<std::net::IpAddr>,
     #[serde(skip_serializing_if = "Option::is_none")]

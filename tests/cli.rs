@@ -55,39 +55,48 @@ fn serve_unix() {
 
     // read startup log line to ensure serve is ready
     let stdout = serve.stdout.take().unwrap();
-    let mut stdout = std::io::BufReader::new(stdout);
-    let mut read = String::new();
-    stdout.read_line(&mut read).unwrap();
-    read.clear();
+    let stdout = std::io::BufReader::new(stdout);
+    let mut loglines = stdout.lines();
+
+    let _logline = loglines.next().unwrap().unwrap();
+    // todo: assert start logline looks OK
 
     let got = run_curl(vec![
         "--http1.1",
         "--unix-socket",
         path,
-        "http://localhost/",
+        "http://localhost:5555/",
     ]);
     assert_eq!(want.as_bytes(), got.stdout);
 
     // next , parse got.stdout to a Response and assert HOST header
-    let log: http_sh::Request = serde_json::from_slice(&got.stdout).unwrap();
-    println!("{:?}", log);
+    let logline = loglines.next().unwrap().unwrap();
+    let log: http_sh::Request = serde_json::from_str(&logline).unwrap();
+    assert_eq!(log.proto, "HTTP/1.1");
+    assert_eq!(log.authority, Some("localhost:5555".to_string()));
 
     let got = run_curl(vec![
         "--http2-prior-knowledge",
         "--unix-socket",
         path,
-        "http://localhost/",
+        "http://localhost:5555/",
     ]);
-    println!("got: {:?}", got);
+    assert_eq!(want.as_bytes(), got.stdout);
+    let logline = loglines.next().unwrap().unwrap();
+    assert_eq!(log.authority, Some("localhost:5555".to_string()));
 
     serve.kill().unwrap();
     // todo: graceful shutdown
     let _exit_status = serve.wait().unwrap();
     // println!("exit_status: {:?}", exit_status);
 
-    // read remaining logs
-    stdout.read_to_string(&mut read).unwrap();
-    println!("remaining logs:\n{}", read);
+    let log: http_sh::Request = serde_json::from_str(&logline).unwrap();
+    assert_eq!(log.proto, "HTTP/2.0");
+
+    println!("remaining logs");
+    for line in loglines {
+        println!("{}", line.unwrap());
+    }
 
     let mut stderr = String::new();
     let n = serve
