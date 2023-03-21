@@ -3,6 +3,13 @@ name = "http-sh"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "http_sh"
+path = "src/lib.rs"
+
+[[bin]]
+name = "http-sh"
+
 [dependencies]
 clap = { version = "4.1.4", features = ["derive", "wrap_help"] }
 tokio = { version = "1", features = ["full"] }
