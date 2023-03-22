@@ -91,7 +91,6 @@ fn connection_cleanup() {
 
     let pid = curl_lines.next().unwrap().unwrap();
     let pid = sysinfo::Pid::from_str(&pid).unwrap();
-    println!("pid: {:?}", pid);
 
     let mut sys = sysinfo::System::new_all();
     sys.refresh_all();
@@ -163,9 +162,8 @@ fn serve_unix() {
     let log: http_sh::Request = serde_json::from_str(&logline).unwrap();
     assert_eq!(log.proto, "HTTP/2.0");
 
-    println!("remaining logs");
     for line in loglines {
-        println!("{}", line.unwrap());
+        println!("remaining stdout: {}", line.unwrap());
     }
 
     let mut stderr = String::new();
