@@ -49,7 +49,6 @@ fn connection_cleanup() {
         .arg(path)
         .arg("--")
         .arg("bash")
-        .arg("-m")
         .arg("-c")
         .arg(
             r#"
