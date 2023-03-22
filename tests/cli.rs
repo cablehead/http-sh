@@ -1,7 +1,10 @@
 use std::io::BufRead;
 use std::io::Read;
+use std::str::FromStr;
 
 use std::process::Command;
+
+use sysinfo::SystemExt;
 
 // Taken from:
 // https://github.com/assert-rs/assert_cmd/blob/e71a9f7b15596dd2aeea911bedbbd1859d84fa67/src/cargo.rs#L183-L208
@@ -32,6 +35,73 @@ fn run_curl(args: Vec<&str>) -> std::process::Output {
         command.arg(arg);
     }
     command.output().unwrap()
+}
+
+#[test]
+fn connection_cleanup() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let path = temp_dir.path().join("test.sock");
+    let path = path.to_str().unwrap();
+
+    let http_sh = cargo_bin("http-sh");
+
+    let serve = Command::new(http_sh)
+        .arg(path)
+        .arg("--")
+        .arg("bash")
+        .arg("-m")
+        .arg("-c")
+        .arg(
+            r#"
+            exec 4>&-
+            sleep 3600 &
+            SLEEPID=$!
+            echo $SLEEPID
+            trap 'kill $SLEEPID' SIGTERM
+            wait
+            "#,
+        )
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut serve = scopeguard::guard(serve, |mut serve| {
+        let _ = serve.kill();
+    });
+
+    // read startup log line to ensure serve is ready
+    let stdout = serve.stdout.take().unwrap();
+    let stdout = std::io::BufReader::new(stdout);
+    let mut loglines = stdout.lines();
+    println!("logline: {:?}", loglines.next().unwrap());
+
+    let mut curl = Command::new("curl")
+        .arg("-s")
+        .arg("--no-buffer")
+        .arg("--unix-socket")
+        .arg(path)
+        .arg("http://localhost/")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let curl_out = curl.stdout.take().unwrap();
+    let curl_out = std::io::BufReader::new(curl_out);
+    let mut curl_lines = curl_out.lines();
+
+    let pid = curl_lines.next().unwrap().unwrap();
+    let pid = sysinfo::Pid::from_str(&pid).unwrap();
+    println!("pid: {:?}", pid);
+
+    let mut sys = sysinfo::System::new_all();
+    sys.refresh_all();
+    assert!(sys.process(pid).is_some());
+
+    let _ = curl.kill().unwrap();
+    let _ = curl.wait().unwrap();
+
+    sys.refresh_all();
+    assert!(sys.process(pid).is_none());
 }
 
 #[test]

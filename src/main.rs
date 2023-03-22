@@ -8,6 +8,7 @@ use futures::TryStreamExt as _;
 
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::watch;
 
 use serde_json::json;
 
@@ -94,11 +95,15 @@ async fn main() {
             stream
         };
 
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
         let svc_fn = hyper::service::service_fn(move |req| {
             let args = args.clone();
+            let shutdown_rx = shutdown_rx.clone();
             async move {
                 Ok::<hyper::Response<hyper::Body>, Infallible>(
                     handler(
+                        shutdown_rx,
                         req,
                         remote_addr,
                         &args.static_path,
@@ -117,24 +122,30 @@ async fn main() {
             {
                 Ok(_) => (),
                 Err(e) => {
+                    if e.is_incomplete_message() {
+                        return;
+                    }
                     if !is_unix {
                         panic!("unexpected error: {:?}", e)
                     }
+
                     // hyper returns an error attempting to `Shutdown` a unix domain socket
                     // connection
                     // https://github.com/hyperium/hyper/blob/master/src/error.rs#L49-L51
                     let e: std::io::Error = *e.into_cause().unwrap().downcast().unwrap();
                     match e.kind() {
-                        std::io::ErrorKind::NotConnected => (),
+                        std::io::ErrorKind::NotConnected => return,
                         _ => panic!("unexpected error: {:?}", e),
                     }
                 }
-            }
+            };
+            drop(shutdown_tx);
         });
     }
 }
 
 async fn handler(
+    mut shutdown_rx: watch::Receiver<bool>,
     req: hyper::Request<hyper::Body>,
     addr: Option<SocketAddr>,
     static_path: &Option<PathBuf>,
@@ -213,8 +224,9 @@ async fn handler(
     };
 
     let req_json = serde_json::to_string(&req_meta).unwrap();
+    let mut stdin = p.stdin.take().expect("failed to take stdin");
 
-    let write_stdin = async {
+    tokio::spawn(async move {
         req_writer
             .write_all(format!("{}\n", &req_json).as_bytes())
             .await
@@ -229,61 +241,78 @@ async fn handler(
 
         let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
         let mut req_body = tokio_util::io::StreamReader::new(req_body);
-        let mut stdin = p.stdin.take().expect("failed to take stdin");
         tokio::io::copy(&mut req_body, &mut stdin)
             .await
-            .expect("streaming request body");
+            .expect("streaming request body to stdin");
+    });
+
+    let mut buf = String::new();
+    res_reader.read_to_string(&mut buf).await.unwrap();
+    drop(res_reader);
+
+    let mut res_meta = if buf.is_empty() {
+        Response::default()
+    } else {
+        serde_json::from_str::<Response>(&buf).unwrap()
     };
 
-    let read_stdout = async {
-        let mut buf = String::new();
-        res_reader.read_to_string(&mut buf).await.unwrap();
-        drop(res_reader);
+    req_meta.response = Some(res_meta.clone());
 
-        let mut res_meta = if buf.is_empty() {
-            Response::default()
-        } else {
-            serde_json::from_str::<Response>(&buf).unwrap()
-        };
+    let status = res_meta.status.unwrap_or(200);
+    res_meta.status = Some(status);
 
-        req_meta.response = Some(res_meta.clone());
-
-        let status = res_meta.status.unwrap_or(200);
-        res_meta.status = Some(status);
-
-        let mut res = hyper::Response::builder().status(status);
-        {
-            let res_headers = res.headers_mut().unwrap();
-            if let Some(headers) = res_meta.headers {
-                for (key, value) in headers {
-                    res_headers.insert(
-                        http::header::HeaderName::from_bytes(key.as_bytes()).unwrap(),
-                        http::header::HeaderValue::from_bytes(value.as_bytes()).unwrap(),
-                    );
-                }
-            }
-
-            if !res_headers.contains_key("content-type") {
-                res_headers.insert("content-type", "text/plain".parse().unwrap());
+    let mut res = hyper::Response::builder().status(status);
+    {
+        let res_headers = res.headers_mut().unwrap();
+        if let Some(headers) = res_meta.headers {
+            for (key, value) in headers {
+                res_headers.insert(
+                    http::header::HeaderName::from_bytes(key.as_bytes()).unwrap(),
+                    http::header::HeaderValue::from_bytes(value.as_bytes()).unwrap(),
+                );
             }
         }
 
-        println!("{}", serde_json::to_string(&req_meta).unwrap());
+        if !res_headers.contains_key("content-type") {
+            res_headers.insert("content-type", "text/plain".parse().unwrap());
+        }
+    }
 
-        let stdout = p.stdout.take().expect("failed to take stdout");
-        let stdout = tokio::io::BufReader::new(stdout);
-        let stdout = tokio_util::io::ReaderStream::new(stdout);
-        let stdout = hyper::Body::wrap_stream(stdout);
-        res.body(stdout).expect("streaming response body")
-    };
-
-    let (_, response) = tokio::join!(write_stdin, read_stdout);
-
+    let (mut sender, body) = hyper::Body::channel();
+    let stdout = p.stdout.take().expect("failed to take stdout");
     tokio::spawn(async move {
-        p.wait().await.expect("process exited with an error");
+        let mut stdout = tokio::io::BufReader::new(stdout);
+        let mut buf = [0; 4096];
+
+        loop {
+            tokio::select! {
+                Ok(n) = stdout.read(&mut buf[..]) => {
+                    if n == 0 {
+                        break; // EOF reached
+                    }
+
+                    if sender.send_data(buf[..n].to_vec().into()).await.is_err() {
+                        break;
+                    }
+                }
+                status = shutdown_rx.changed() => {
+                    if status.is_err() {
+                        break;
+                    }
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
+                },
+            }
+        }
+
+        let pid = nix::unistd::Pid::from_raw(p.id().unwrap() as i32);
+        nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap();
     });
 
-    response
+    let ret = res.body(body).unwrap();
+    println!("{}", serde_json::to_string(&req_meta).unwrap());
+    ret
 }
 
 fn configure_tls(pem: PathBuf) -> tokio_rustls::TlsAcceptor {
@@ -329,10 +358,12 @@ mod tests {
 
     #[tokio::test]
     async fn handler_get() {
+        let (_tx, rx) = tokio::sync::watch::channel(false);
         let req = hyper::Request::get("https://api.cross.stream/")
             .body(hyper::Body::empty())
             .unwrap();
         let resp = handler(
+            rx,
             req,
             None,
             &None,
@@ -349,11 +380,12 @@ mod tests {
 
     #[tokio::test]
     async fn handler_post() {
+        let (_tx, rx) = tokio::sync::watch::channel(false);
         let req = hyper::Request::post("https://api.cross.stream/")
             .header("Last-Event-ID", 5)
             .body("zebody".into())
             .unwrap();
-        let resp = handler(req, None, &None, &"cat".into(), &vec![]).await;
+        let resp = handler(rx, req, None, &None, &"cat".into(), &vec![]).await;
         assert_eq!(resp.status(), hyper::StatusCode::OK);
         assert_eq!(resp.headers().get("content-type").unwrap(), "text/plain");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
@@ -363,10 +395,12 @@ mod tests {
 
     #[tokio::test]
     async fn handler_response_empty() {
+        let (_tx, rx) = tokio::sync::watch::channel(false);
         let req = hyper::Request::get("https://api.cross.stream/")
             .body(hyper::Body::empty())
             .unwrap();
         let resp = handler(
+            rx,
             req,
             None,
             &None,
@@ -389,10 +423,12 @@ mod tests {
 
     #[tokio::test]
     async fn handler_response_meta() {
+        let (_tx, rx) = tokio::sync::watch::channel(false);
         let req = hyper::Request::get("https://api.cross.stream/notfound")
             .body(hyper::Body::empty())
             .unwrap();
         let resp = handler(
+            rx,
             req,
             None,
             &None,
@@ -423,6 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn handler_static() {
+        let (_tx, rx) = tokio::sync::watch::channel(false);
         let d = tempfile::tempdir().unwrap();
 
         let subdir = d.path().join("static");
@@ -437,6 +474,7 @@ mod tests {
             .body(hyper::Body::empty())
             .unwrap();
         let resp = handler(
+            rx.clone(),
             req,
             None,
             &static_path,
@@ -459,6 +497,7 @@ mod tests {
             .body(hyper::Body::empty())
             .unwrap();
         let resp = handler(
+            rx.clone(),
             req,
             None,
             &static_path,
