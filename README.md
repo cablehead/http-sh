@@ -4,6 +4,12 @@
     https://github.com/cablehead/http-sh/actions/workflows/ci.yml/badge.svg)](
         https://github.com/cablehead/http-sh/actions/workflows/ci.yml)
 
+## Install
+
+```bash
+cargo install http-sh
+```
+
 ## Overview
 
 ### GET: Hello world
