@@ -29,7 +29,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.83", features = ["preserve_order"] }
 http = "0.2.8"
 http-serde = "1.1.0"
-scru128 = { version = "2.2.0", features = ["serde"] }
+scru128 = { version = "3.0.1", features = ["serde"] }
 command-fds = { version = "0.2.2", features = ["tokio"] }
 tokio-pipe = "0.2.12"
 tokio-rustls = "0.24.0"
