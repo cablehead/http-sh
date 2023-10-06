@@ -116,3 +116,22 @@ data: {"date":"Sat Feb 25 13:13:39 EST 2023"}
 
 ...
 ```
+
+## Direct Testing of Script
+
+While `http-sh` provides a convenient way to serve HTTP requests and interact with the associated metadata, there might be times when you wish to directly test the script you intend to use with `http-sh` without the HTTP layer.
+
+To simulate the environment in which `http-sh` invokes your script, you can use the following command:
+
+```bash
+echo "Hai" | ./root.sh 3</tmp/req.json 4>&1
+```
+
+Here's a breakdown of what's happening:
+
+1. `echo "Hai"`: Simulates sending the request body.
+2. `./root.sh`: Your script that processes the input.
+3. `3</tmp/req.json`: Mimics the JSON metadata that `http-sh` provides on file descriptor 3. To obtain this JSON metadata for testing, check the log line of a specific request from the `http-sh` logs, which are structured in JSON format.
+4. `4>&1`: Redirects output from file descriptor 4 to stdout, so you can see the response metadata and main response together in the terminal.
+
+This method allows you to bypass `http-sh` during development and testing phases, ensuring that your script behaves as expected before integrating it with the HTTP server.
