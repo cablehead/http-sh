@@ -2,6 +2,13 @@
 name = "http-sh"
 version = "0.1.0"
 edition = "2021"
+description = "An HTTP server for executing shell scripts."
+license = "MIT"
+repository = "https://github.com/cablehead/http-sh"
+readme = "README.md"
+homepage = "https://github.com/cablehead/http-sh"
+keywords = ["http", "shell", "bash", "server"]
+categories = ["web-programming", "command-line-utilities"]
 
 [lib]
 name = "http_sh"
