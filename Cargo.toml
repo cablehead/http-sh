@@ -35,7 +35,7 @@ tokio-pipe = "0.2.12"
 tokio-rustls = "0.24.0"
 rustls-pemfile = "1.0.2"
 rustls = "0.21.0"
-nix = { version = "0.26.2", features = ["signal"] }
+nix = { version = "0.27.1", features = ["signal"] }
 
 [dev-dependencies]
 pretty_assertions = "1.3.0"
