@@ -10,6 +10,10 @@
 cargo install http-sh
 ```
 
+## Live examples
+
+- [`chat-app`](https://ndyg.cross.stream/projects/chat-app)
+
 ## Overview
 
 ### GET: Hello world
