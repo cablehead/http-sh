@@ -24,6 +24,14 @@ $ curl -s localhost:5000
 Hello world
 ```
 
+You can listen to UNIX domain sockets as well
+
+```bash
+$ http-sh ./sock -- echo Hello world
+$ curl -s curl --unix-socket ./sock localhost
+Hello world
+```
+
 ### POST: echo
 
 ```bash
