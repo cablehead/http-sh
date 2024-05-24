@@ -3,8 +3,13 @@
 Run with:
 
 ```bash
-http-sh --static-path ./examples/static --port 3333 -- bash -c "echo {}; jq .path"
+http-sh -s ./css :3333 -- bash -c '
+  jo headers="$(jo "content-type"="text/html")" >&4
+  cat index.html
+'
 ```
+
+Visit: http://localhost:3333
 
 ## sanitize.css.gz
 
@@ -17,5 +22,3 @@ curl -s -L https://github.com/csstools/sanitize.css/archive/refs/tags/v13.0.0.ta
     minify --type=css | \
     gzip -c > css/sanitize.css.gz
 ```
-
-
