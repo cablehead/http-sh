@@ -19,8 +19,8 @@ cargo install http-sh --locked
 ### GET: Hello world
 
 ```bash
-$ http-sh :5000 -- echo Hello world
-$ curl -s localhost:5000
+$ http-sh :3001 -- echo Hello world
+$ curl -s localhost:3001
 Hello world
 ```
 
@@ -28,15 +28,15 @@ You can listen to UNIX domain sockets as well
 
 ```bash
 $ http-sh ./sock -- echo Hello world
-$ curl -s curl --unix-socket ./sock localhost
+$ curl -s --unix-socket ./sock localhost
 Hello world
 ```
 
 ### POST: echo
 
 ```bash
-$ http-sh :5000 -- cat
-$ curl -s -d Hai localhost:5000
+$ http-sh :3001 -- cat
+$ curl -s -d Hai localhost:3001
 Hai
 ```
 
@@ -47,12 +47,12 @@ The Request metadata is available as JSON on file descriptor 3.
 Pairs well with [`jq`](https://github.com/stedolan/jq)
 
 ```bash
-$ http-sh :5000 -- bash -c 'jq <&3'
-$ curl -s localhost:5000
+$ http-sh :3001 -- bash -c 'jq <&3'
+$ curl -s localhost:3001
 {
   "headers": {
     "accept": "*/*",
-    "host": "localhost:5000",
+    "host": "localhost:3001",
     "user-agent": "curl/7.79.1"
   },
   "method": "GET",
@@ -65,8 +65,8 @@ $ curl -s localhost:5000
   "uri": "/"
 }
 
-$ http-sh :5000 -- bash -c 'echo hello: $(jq -r .path <&3)'
-$ curl -s localhost:5000/yello
+$ http-sh :3001 -- bash -c 'echo hello: $(jq -r .path <&3)'
+$ curl -s localhost:3001/yello
 hello: /yello
 ```
 
@@ -78,8 +78,8 @@ Currently you can set the Response `status` and `headers`.
 Pairs well with [`jo`](https://github.com/jpmens/jo)
 
 ```
-$ http-sh :5000 -- bash -c 'jo status=404 >&4; echo sorry, eh'
-$ curl -si localhost:5000
+$ http-sh :3001 -- bash -c 'jo status=404 >&4; echo sorry, eh'
+$ curl -si localhost:3001
 HTTP/1.1 404 Not Found
 content-type: text/plain
 transfer-encoding: chunked
@@ -92,8 +92,8 @@ Note, for streaming responses, you'll want to close fd 4, so the Response is
 initiated.
 
 ```
-$ http-sh :5000 -- bash -c 'exec 4>&-; while true ; do date; sleep 1; done'
-$ curl -s localhost:5000
+$ http-sh :3001 -- bash -c 'exec 4>&-; while true ; do date; sleep 1; done'
+$ curl -s localhost:3001
 Sat Feb 25 00:31:41 EST 2023
 Sat Feb 25 00:31:43 EST 2023
 Sat Feb 25 00:31:44 EST 2023
@@ -107,7 +107,7 @@ Sat Feb 25 00:31:46 EST 2023
 Pairs well with [`xcat`](https://github.com/cablehead/xcat)
 
 ```bash
-$ http-sh :5000 -- bash -c '
+$ http-sh :3001 -- bash -c '
     jo headers="$(jo "content-type"="text/event-stream")" >&4
     exec 4>&-
     tail -F source.json | xcat -- bash -c "sed '\''s/^/data: /g'\''; echo;"
@@ -116,7 +116,7 @@ $ http-sh :5000 -- bash -c '
 # simulate generating events in a seperate process
 $ while true; do jo date="$(date)" ; sleep 1 ; done >> source.json
 
-$ curl -si localhost:5000/
+$ curl -si localhost:3001/
 HTTP/1.1 200 OK
 content-type: text/event-stream
 transfer-encoding: chunked
