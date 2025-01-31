@@ -1,7 +1,7 @@
 # http-sh [![CI](https://github.com/cablehead/http-sh/actions/workflows/ci.yml/badge.svg)](https://github.com/cablehead/http-sh/actions/workflows/ci.yml)
 
 `http-sh` lets you attach a Bash scripts to an HTTP interface. If you prefer
-Nushell to POSIX, this project has a cousin called
+[Nushell](https://www.nushell.sh) to POSIX, this project has a cousin called
 [http-nu](https://github.com/cablehead/http-nu).
 
 ## Install
