@@ -7,7 +7,7 @@ Nushell to POSIX, this project has a cousin called
 ## Install
 
 ```bash
-cargo install http-sh
+cargo install http-sh --locked
 ```
 
 ## Live examples
