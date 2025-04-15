@@ -20,7 +20,7 @@ name = "http-sh"
 [dependencies]
 clap = { version = "4.1.4", features = ["derive", "wrap_help"] }
 tokio = { version = "1", features = ["full"] }
-hyper = { version = "0.14", features = ["server", "http1", "http2", "runtime"] }
+hyper = { version = "1.1", features = ["server", "http1", "http2", "runtime"] }
 hyper-staticfile = "0.9.4"
 futures = "0.3"
 tokio-util = { version = "0.7.3", features = ["full"] }
