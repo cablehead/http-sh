@@ -239,7 +239,7 @@ async fn handler(
             .expect("failed to write request metadata");
         drop(req_writer);
 
-        let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+        let req_body = req_body.map_err(std::io::Error::other);
         let mut req_body = tokio_util::io::StreamReader::new(req_body);
         tokio::io::copy(&mut req_body, &mut stdin)
             .await
