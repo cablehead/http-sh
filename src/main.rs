@@ -228,7 +228,7 @@ async fn handler(
 
     tokio::spawn(async move {
         req_writer
-            .write_all(format!("{}\n", &req_json).as_bytes())
+            .write_all(format!("{}\n", req_json).as_bytes())
             .await
             .or_else(|e| match e.kind() {
                 // ignore BrokenPipe errors, as the child process may have exited without
