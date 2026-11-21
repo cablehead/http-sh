@@ -228,7 +228,7 @@ async fn handler(
 
     tokio::spawn(async move {
         req_writer
-            .write_all(format!("{}\n", &req_json).as_bytes())
+            .write_all(format!("{}\n", req_json).as_bytes())
             .await
             .or_else(|e| match e.kind() {
                 // ignore BrokenPipe errors, as the child process may have exited without
@@ -239,7 +239,7 @@ async fn handler(
             .expect("failed to write request metadata");
         drop(req_writer);
 
-        let req_body = req_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+        let req_body = req_body.map_err(std::io::Error::other);
         let mut req_body = tokio_util::io::StreamReader::new(req_body);
         tokio::io::copy(&mut req_body, &mut stdin)
             .await
@@ -316,32 +316,16 @@ async fn handler(
 }
 
 fn configure_tls(pem: PathBuf) -> tokio_rustls::TlsAcceptor {
-    let pem = std::fs::File::open(pem).unwrap();
-    let mut pem = std::io::BufReader::new(pem);
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-    let items = rustls_pemfile::read_all(&mut pem).unwrap();
-
-    let certs: Vec<rustls::Certificate> = items
-        .iter()
-        .filter_map(|item| match item {
-            rustls_pemfile::Item::X509Certificate(cert) => Some(rustls::Certificate(cert.to_vec())),
-            _ => None,
-        })
-        .collect();
-
-    let key = items
-        .into_iter()
-        .find_map(|item| match item {
-            rustls_pemfile::Item::RSAKey(key) => Some(rustls::PrivateKey(key)),
-            rustls_pemfile::Item::PKCS8Key(key) => Some(rustls::PrivateKey(key)),
-            rustls_pemfile::Item::ECKey(key) => Some(rustls::PrivateKey(key)),
-            rustls_pemfile::Item::X509Certificate(_) => None,
-            _ => todo!(),
-        })
+    let certs: Vec<CertificateDer> = CertificateDer::pem_file_iter(&pem)
+        .unwrap()
+        .collect::<Result<_, _>>()
         .unwrap();
+    let key = PrivateKeyDer::from_pem_file(&pem).unwrap();
 
     let mut config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .unwrap();
