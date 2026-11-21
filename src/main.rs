@@ -316,32 +316,16 @@ async fn handler(
 }
 
 fn configure_tls(pem: PathBuf) -> tokio_rustls::TlsAcceptor {
-    let pem = std::fs::File::open(pem).unwrap();
-    let mut pem = std::io::BufReader::new(pem);
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-    let items = rustls_pemfile::read_all(&mut pem).unwrap();
-
-    let certs: Vec<rustls::Certificate> = items
-        .iter()
-        .filter_map(|item| match item {
-            rustls_pemfile::Item::X509Certificate(cert) => Some(rustls::Certificate(cert.to_vec())),
-            _ => None,
-        })
-        .collect();
-
-    let key = items
-        .into_iter()
-        .find_map(|item| match item {
-            rustls_pemfile::Item::RSAKey(key) => Some(rustls::PrivateKey(key)),
-            rustls_pemfile::Item::PKCS8Key(key) => Some(rustls::PrivateKey(key)),
-            rustls_pemfile::Item::ECKey(key) => Some(rustls::PrivateKey(key)),
-            rustls_pemfile::Item::X509Certificate(_) => None,
-            _ => todo!(),
-        })
+    let certs: Vec<CertificateDer> = CertificateDer::pem_file_iter(&pem)
+        .unwrap()
+        .collect::<Result<_, _>>()
         .unwrap();
+    let key = PrivateKeyDer::from_pem_file(&pem).unwrap();
 
     let mut config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .unwrap();
